@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.5] - 2026-01-31
+
+### 🌑 Dark Mode & Efficiency Update
+This release brings highly requested visual and efficiency improvements, focusing on user comfort and task input precision.
+
+### ✨ Features
+- **Dark Mode Support**:
+  - Full application-wide dark theme integration.
+  - Automatic system preference detection and manual toggle via the logo dropdown.
+  - Persistent theme settings saved to local storage.
+- **Enhanced Task Scheduling (V0.0.4.1)**:
+  - Integrated native Date and Time pickers in the task edit modal.
+  - Bi-directional sync between UI controls and Markdown `@YYYY-MM-DD` syntax.
+- **UI & Localization Stability**:
+  - Fully localized system workflow categories (Inbox, Next Actions, etc.) based on UI language.
+  - Standardized Lucide icon integration and property syntax.
+
+### 🐛 Bug Fixes
+- Fixed critical `null` pointer errors in task filtering and calendar view.
+- Resolved project renaming issues by ensuring robust heading level detection.
+- Fixed checkbox interaction bugs during drag-and-drop operations.
+
 ## [0.0.4] - 2026-01-31
 
 ### 🚀 UX Refinement & Internationalization
