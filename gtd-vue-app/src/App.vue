@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, nextTick, shallowRef, onUnmounted } fr
 import { 
   CheckCircle2, Layout, FileText, Plus, Menu, Inbox, Hash, Zap, Coffee, Hourglass, 
   ListTodo, Info, ChevronLeft, ChevronRight, CalendarDays, Clock, Trash2, X, Calendar as CalendarIcon,
-  FolderOpen, Save, RefreshCw, Pin
+  FolderOpen, Save, RefreshCw, Pin, Search, Eye, EyeOff, Tag
 } from 'lucide-vue-next';
 import TaskCard from './components/TaskCard.vue';
 import ProjectItem from './components/ProjectItem.vue';
@@ -67,6 +67,9 @@ const markdown = ref(localStorage.getItem('gtd-markdown') || DEFAULT_MARKDOWN);
 const activeView = ref('view'); 
 const calendarMode = ref('day'); 
 const selectedFilter = ref({ type: 'all', value: 'ALL' });
+const selectedTag = ref(null);
+const searchQuery = ref('');
+const hideCompleted = ref(false);
 const sidebarOpen = ref(true);
 const newTaskInput = ref('');
 const expandedGroups = ref({'📥 收件箱': true, '⚡ 下一步行动': true});
@@ -77,6 +80,7 @@ const quickAddDate = ref(null);
 const selectionStart = ref(null);
 const selectionEnd = ref(null);
 const isSelecting = ref(false);
+const selectedTaskForEdit = ref(null);
 
 const scrollRef = ref(null);
 const currentFileHandle = shallowRef(null); // File System Access API Handle
@@ -94,9 +98,12 @@ const parsedData = computed(() => {
   const stack = [root];
   const all = [];
 
+  let currentTask = null;
+
   lines.forEach((line, index) => {
     const trimmed = line.trim();
     if (trimmed.startsWith('#')) {
+      currentTask = null;
       const level = (trimmed.match(/^#+/) || ['#'])[0].length;
       const nodeName = trimmed.replace(/^#+\s*/, '');
       const node = { 
@@ -110,23 +117,99 @@ const parsedData = computed(() => {
       stack.push(node);
     } else if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]')) {
       const dateMatch = trimmed.match(/@(\d{4}-\d{2}-\d{2}(~\d{4}-\d{2}-\d{2})?(\s\d{2}:\d{2}(~\d{2}:\d{2})?)?)/);
+      const priorityMatch = trimmed.match(/!([1-3])/);
+      const tagsMatch = trimmed.match(/#([^\s#]+)/g);
+      
       const task = {
         id: `task-${index}`,
         lineIndex: index,
-        content: trimmed.replace(/^- \[[ x]\]\s*/, '').replace(/@\d{4}-\d{2}-\d{2}(~\d{4}-\d{2}-\d{2})?(\s\d{2}:\d{2}(~\d{2}:\d{2})?)?/, '').trim(),
+        lineCount: 1,
+        content: trimmed
+          .replace(/^- \[[ x]\]\s*/, '')
+          .replace(/@\d{4}-\d{2}-\d{2}(~\d{4}-\d{2}-\d{2})?(\s\d{2}:\d{2}(~\d{2}:\d{2})?)?/, '')
+          .replace(/![1-3]/, '')
+          .replace(/#[^\s#]+/g, '')
+          .trim(),
         completed: trimmed.startsWith('- [x]'),
         date: dateMatch ? dateMatch[1] : null,
-        projectPath: stack[stack.length - 1].path
+        priority: priorityMatch ? parseInt(priorityMatch[1]) : null,
+        tags: tagsMatch ? tagsMatch.map(t => t.substring(1)) : [],
+        projectPath: stack[stack.length - 1].path,
+        notes: []
       };
       stack[stack.length - 1].tasks.push(task);
       all.push(task);
+      currentTask = task;
+    } else if (currentTask && (line.startsWith('  ') || line.startsWith('\t'))) {
+      currentTask.notes.push(trimmed);
+      currentTask.lineCount++;
+    } else if (trimmed === '' && currentTask) {
+      // Potentially part of a note if next line is indented, but for now we simplify
+      currentTask = null;
+    } else {
+      currentTask = null;
     }
   });
+
+  const calculateStats = (node) => {
+    let incomplete = node.tasks.filter(t => !t.completed).length;
+    node.children.forEach(child => {
+      const stats = calculateStats(child);
+      incomplete += stats.incomplete;
+    });
+    node.incompleteCount = incomplete;
+    return { incomplete };
+  };
+  
+  root.children.forEach(calculateStats);
+
   return { projects: root.children, allTasks: all };
 });
 
 const projects = computed(() => parsedData.value.projects);
 const allTasks = computed(() => parsedData.value.allTasks);
+
+const allTags = computed(() => {
+  const tags = new Set();
+  allTasks.value.forEach(t => t.tags.forEach(tag => tags.add(tag)));
+  return Array.from(tags).sort();
+});
+
+const filteredTasks = computed(() => {
+  const query = searchQuery.value.toLowerCase();
+  const filter = selectedFilter.value.value;
+  const tag = selectedTag.value;
+  
+  return allTasks.value.filter(t => {
+    const projectMatch = filter === 'ALL' || t.projectPath.startsWith(filter);
+    const tagMatch = !tag || t.tags.includes(tag);
+    const searchMatch = !query || 
+      t.content.toLowerCase().includes(query) ||
+      t.projectPath.toLowerCase().includes(query) ||
+      t.tags.some(tg => tg.toLowerCase().includes(query));
+    const completedMatch = !hideCompleted.value || !t.completed;
+    
+    return projectMatch && tagMatch && searchMatch && completedMatch;
+  });
+});
+
+const activeProjects = computed(() => {
+  const coreCategories = ['收件箱', '下一步行动', '等待确认', '将来/也许'];
+  
+  const findActive = (nodes) => {
+    let active = [];
+    nodes.forEach(node => {
+      const isCore = coreCategories.some(cat => node.path === cat || node.name.includes(cat));
+      
+      if (node.incompleteCount > 0 && !isCore) {
+        active.push(node);
+      }
+      active = active.concat(findActive(node.children));
+    });
+    return active;
+  };
+  return findActive(projects.value);
+});
 
 const calendarDays = computed(() => {
   const days = [];
@@ -165,17 +248,146 @@ const handleToggle = (idx, status) => {
   markdown.value = lines.join('\n');
 };
 
+const handleUpdateTask = (lineIndex, updates) => {
+  const lines = markdown.value.split('\n');
+  const task = allTasks.value.find(t => parseInt(t.lineIndex) === parseInt(lineIndex));
+  if (!task) return;
+
+  const newCompleted = updates.completed !== undefined ? updates.completed : task.completed;
+  const newContent = updates.content !== undefined ? updates.content : task.content;
+  const newDate = updates.date !== undefined ? updates.date : task.date;
+  const newPriority = updates.priority !== undefined ? updates.priority : task.priority;
+  const newTags = updates.tags !== undefined ? updates.tags : task.tags;
+
+  let newLine = `- [${newCompleted ? 'x' : ' '}] ${newContent}`;
+  if (newPriority) newLine += ` !${newPriority}`;
+  if (newDate) newLine += ` @${newDate}`;
+  if (newTags && newTags.length) newLine += ` ${newTags.map(t => '#' + t).join(' ')}`;
+  
+  lines[lineIndex] = newLine;
+  markdown.value = lines.join('\n');
+};
+
 const handleDeleteTask = (idx) => {
   const lines = markdown.value.split('\n');
   lines.splice(idx, 1);
   markdown.value = lines.join('\n');
 };
 
+const handleMoveTaskToProject = (lineIndex, targetProjectPath) => {
+  const lines = markdown.value.split('\n');
+  const task = allTasks.value.find(t => parseInt(t.lineIndex) === parseInt(lineIndex));
+  if (!task) return;
+
+  const lineCount = task.lineCount || 1;
+  const taskLines = lines.slice(lineIndex, lineIndex + lineCount);
+
+  // Find target project heading
+  const targetParts = targetProjectPath.split(' / ');
+  const targetName = targetParts[targetParts.length - 1].trim();
+  const targetLevel = targetParts.length;
+
+  const projectIndex = lines.findIndex(l => {
+    if (!l.startsWith('#')) return false;
+    const lLevel = (l.match(/^#+/) || ['#'])[0].length;
+    const lName = l.replace(/^#+\s*/, '').trim();
+    return lName === targetName && lLevel === targetLevel;
+  });
+
+  if (projectIndex !== -1) {
+    // Remove task from old position
+    lines.splice(lineIndex, lineCount);
+    
+    // Re-find project index after removal
+    const adjustedProjectIndex = lines.findIndex(l => {
+      if (!l.startsWith('#')) return false;
+      const lLevel = (l.match(/^#+/) || ['#'])[0].length;
+      const lName = l.replace(/^#+\s*/, '').trim();
+      return lName === targetName && lLevel === targetLevel;
+    });
+
+    lines.splice(adjustedProjectIndex + 1, 0, ...taskLines);
+    markdown.value = lines.join('\n');
+  }
+};
+
+const activeProjectsDragOver = ref(null);
+
+const handleConvertTaskToProject = (lineIndex) => {
+  const lines = markdown.value.split('\n');
+  const task = allTasks.value.find(t => parseInt(t.lineIndex) === parseInt(lineIndex));
+  if (!task) return;
+
+  const currentLevel = task.projectPath.split(' / ').length;
+  const newHeading = '#'.repeat(currentLevel + 1) + ' ' + task.content;
+  
+  lines[lineIndex] = newHeading;
+  markdown.value = lines.join('\n');
+};
+
+const handleAddProject = () => {
+  const lines = markdown.value.split('\n');
+  lines.push('', '# 新建项目');
+  markdown.value = lines.join('\n');
+};
+
+const handleDeleteProject = (path) => {
+  if (!confirm(`确定要删除项目 "${path}" 及其所有任务吗？`)) return;
+  
+  const lines = markdown.value.split('\n');
+  const pathParts = path.split(' / ');
+  const name = pathParts[pathParts.length - 1];
+  const level = pathParts.length;
+
+  const startIndex = lines.findIndex(l => {
+    if (!l.startsWith('#')) return false;
+    const lLevel = (l.match(/^#+/) || ['#'])[0].length;
+    const lName = l.replace(/^#+\s*/, '');
+    return lName === name && lLevel === level;
+  });
+
+  if (startIndex === -1) return;
+
+  // Find where the next heading of same or higher level starts
+  let endIndex = lines.length;
+  for (let i = startIndex + 1; i < lines.length; i++) {
+    if (lines[i].startsWith('#')) {
+      const lLevel = (lines[i].match(/^#+/) || ['#'])[0].length;
+      if (lLevel <= level) {
+        endIndex = i;
+        break;
+      }
+    }
+  }
+
+  lines.splice(startIndex, endIndex - startIndex);
+  markdown.value = lines.join('\n');
+  if (selectedFilter.value.value === path) {
+    selectedFilter.value = { type: 'all', value: 'ALL' };
+  }
+};
+
 const addTask = (dateInfo = null) => {
   if (!newTaskInput.value.trim()) return;
   const lines = markdown.value.split('\n');
-  let content = `- [ ] ${newTaskInput.value.trim()}`;
-  if (dateInfo) content += ` @${dateInfo}`;
+  let text = newTaskInput.value.trim();
+  let date = dateInfo;
+
+  // Basic NLP for dates if not provided by calendar
+  if (!date) {
+    if (text.includes('今天')) {
+      date = getToday();
+      text = text.replace('今天', '').trim();
+    } else if (text.includes('明天')) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      date = formatDate(tomorrow);
+      text = text.replace('明天', '').trim();
+    }
+  }
+
+  let content = `- [ ] ${text}`;
+  if (date) content += ` @${date}`;
   
   let insertIdx = -1;
   if (selectedFilter.value.value !== 'ALL') {
@@ -442,6 +654,21 @@ onUnmounted(() => {
 // --- Drag & Drop ---
 const onDragStart = (e, task) => {
   e.dataTransfer.setData('task', JSON.stringify(task));
+  e.dataTransfer.effectAllowed = 'move';
+};
+
+const onDragOver = (e) => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+};
+
+const onSidebarDrop = (e, targetPath) => {
+  try {
+    const taskData = JSON.parse(e.dataTransfer.getData('task'));
+    handleMoveTaskToProject(taskData.lineIndex, targetPath);
+  } catch (err) {
+    console.error('Sidebar drop error:', err);
+  }
 };
 
 const onDrop = (e, dayDate) => {
@@ -465,11 +692,26 @@ const onDrop = (e, dayDate) => {
            <CheckCircle2 class="w-8 h-8" /> <span>GTD Flow</span>
          </div>
          <div class="px-2 py-1 rounded text-[10px] font-bold border" :class="isSaving ? 'text-amber-500 bg-amber-50 border-amber-100' : 'text-emerald-500 bg-emerald-50 border-emerald-100'">
-            {{ isSaving ? 'SAVING...' : 'V0.0.2' }}
+            {{ isSaving ? 'SAVING...' : 'V0.0.3.3' }}
          </div>
       </div>
       
       <div class="flex-1 overflow-y-auto px-4 space-y-6 pb-10">
+        <!-- Global Search -->
+        <div class="px-4 mt-2">
+          <div class="relative group">
+            <Search class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500" :size="14"/>
+            <input 
+              v-model="searchQuery"
+              class="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
+              placeholder="搜索任务、项目或标签..."
+            />
+            <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+              <X :size="12"/>
+            </button>
+          </div>
+        </div>
+
         <!-- File Management Section -->
         <nav class="space-y-1">
            <div class="px-4 text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">文件管理</div>
@@ -511,35 +753,81 @@ const onDrop = (e, dayDate) => {
            </div>
         </nav>
 
-        <nav class="space-y-1">
-          <div class="px-4 text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 mt-8 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">主视图切换</div>
+        <nav class="space-y-0.5">
+          <div class="px-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">主视图</div>
           
           <div @click="selectedFilter = {type: 'all', value: 'ALL'}; activeView = 'view'" 
-               class="flex items-center gap-3 px-4 py-3 cursor-pointer rounded-2xl font-black transition-all group"
-               :class="activeView === 'view' && selectedFilter.value === 'ALL' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 translate-x-1' : 'text-slate-500 hover:bg-slate-100 hover:translate-x-1'">
-            <ListTodo :size="18" :class="activeView === 'view' && selectedFilter.value === 'ALL' ? 'text-white' : 'text-slate-300 group-hover:text-blue-500'"/>
-            <span class="text-xs">清单模式</span>
+               class="flex items-center justify-between px-4 py-2 cursor-pointer rounded-xl transition-all group"
+               :class="activeView === 'view' && selectedFilter.value === 'ALL' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
+            <div class="flex items-center gap-3">
+              <ListTodo :size="20" :class="activeView === 'view' && selectedFilter.value === 'ALL' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+              <span class="text-sm font-bold">所有任务</span>
+            </div>
+            <button @click.stop="hideCompleted = !hideCompleted" 
+                    class="p-1.5 rounded-lg transition-colors hover:bg-white/20"
+                    :title="hideCompleted ? '显示已完成' : '隐藏已完成'">
+              <component :is="hideCompleted ? EyeOff : Eye" :size="16" :class="activeView === 'view' && selectedFilter.value === 'ALL' ? 'text-blue-200' : 'text-slate-300'"/>
+            </button>
           </div>
           
           <div @click="activeView = 'calendar'" 
-               class="flex items-center gap-3 px-4 py-3 cursor-pointer rounded-2xl font-black transition-all group"
-               :class="activeView === 'calendar' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 translate-x-1' : 'text-slate-500 hover:bg-slate-100 hover:translate-x-1'">
-            <CalendarIcon :size="18" :class="activeView === 'calendar' ? 'text-white' : 'text-slate-300 group-hover:text-blue-500'"/>
-            <span class="text-xs">日历日程</span>
+               class="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-xl transition-all group"
+               :class="activeView === 'calendar' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
+            <CalendarIcon :size="20" :class="activeView === 'calendar' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+            <span class="text-sm font-bold">日历日程</span>
+          </div>
+        </nav>
+
+        <nav class="space-y-0.5">
+          <div class="px-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 mt-6 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">标签</div>
+          <div class="flex flex-wrap gap-1.5 px-4 py-1">
+            <button 
+              v-for="tag in allTags" :key="tag"
+              @click="selectedTag = tag === selectedTag ? null : tag"
+              class="px-2 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center gap-1"
+              :class="selectedTag === tag ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-500 border-slate-200 hover:border-blue-300'"
+            >
+              #{{ tag }}
+            </button>
           </div>
         </nav>
         
-        <nav class="space-y-1">
-          <div class="px-4 text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 mt-8 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">GTD 工作流 / 项目</div>
+        <nav class="space-y-0.5">
+          <div class="px-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 mt-6 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">活跃项目 ({{ activeProjects.length }})</div>
+          <div v-for="p in activeProjects" :key="p.path" 
+               @click="selectedFilter = {type: 'project', value: p.path}; activeView = 'view'"
+               @dragover="onDragOver($event); activeProjectsDragOver = p.path"
+               @dragleave="activeProjectsDragOver = null"
+               @drop="activeProjectsDragOver = null; onSidebarDrop($event, p.path)"
+               class="flex items-center gap-3 px-4 py-1.5 cursor-pointer rounded-xl transition-all group border-2 border-transparent"
+               :class="[
+                 selectedFilter.value === p.path ? 'bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-50',
+                 activeProjectsDragOver === p.path ? 'border-blue-400 bg-blue-50' : ''
+               ]">
+            <div class="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
+            <span class="text-sm font-bold truncate flex-1">{{ p.name }}</span>
+            <span class="text-[10px] font-bold text-slate-400">{{ p.incompleteCount }}</span>
+          </div>
+        </nav>
+
+        <nav class="space-y-0.5">
+          <div class="px-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 mt-6 flex items-center justify-between gap-2">
+            <span class="flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">工作流与目录</span>
+            <button @click="handleAddProject" class="p-1 hover:bg-slate-100 rounded text-blue-500 transition-colors">
+              <Plus :size="16"/>
+            </button>
+          </div>
           <template v-for="p in projects" :key="p.path">
             <ProjectItem 
               :node="p" 
               :expanded="expandedGroups[p.path]"
-              :icon="getGTDIcon(p.name)"
               :tip="getGTDTips(p.name)"
               :active="selectedFilter.value === p.path && activeView === 'view'"
               @toggle="expandedGroups[p.path] = !expandedGroups[p.path]"
               @select="(node) => { selectedFilter = {type: 'project', value: node.path}; activeView = 'view'; }"
+              @rename="handleUpdateProject"
+              @delete="handleDeleteProject"
+              @drop-task="handleMoveTaskToProject"
             />
           </template>
         </nav>
@@ -562,11 +850,14 @@ const onDrop = (e, dayDate) => {
     </div>
 
     <!-- Main Content -->
-    <div class="flex-1 flex flex-col min-w-0 bg-slate-50">
+    <div class="flex-1 flex flex-col min-w-0 bg-slate-50 relative">
+      <!-- Mobile Overlay -->
+      <div v-if="sidebarOpen" @click="sidebarOpen = false" class="lg:hidden fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-10"></div>
+
       <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 z-10">
         <div class="flex items-center gap-4">
           <button @click="sidebarOpen = !sidebarOpen" class="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-400"><Menu :size="20"/></button>
-          <h2 class="font-bold text-lg text-slate-700 truncate max-w-[200px]">
+          <h2 class="font-bold text-lg text-slate-700 truncate max-w-[150px] sm:max-w-[300px]">
             {{ activeView === 'calendar' 
               ? `${viewDate.getFullYear()}年 ${viewDate.getMonth() + 1}月` 
               : (selectedFilter.value === 'ALL' ? '所有任务清单' : `${selectedFilter.value.split(' / ').pop()} 清单`)
@@ -574,8 +865,8 @@ const onDrop = (e, dayDate) => {
           </h2>
         </div>
         
-        <div class="flex items-center gap-4">
-          <div v-if="activeView === 'calendar'" class="flex items-center bg-slate-100 p-1 rounded-xl">
+        <div class="flex items-center gap-2 sm:gap-4">
+          <div v-if="activeView === 'calendar'" class="hidden sm:flex items-center bg-slate-100 p-1 rounded-xl">
             <button v-for="m in ['day', 'week', 'month']" :key="m" @click="calendarMode = m"
               class="px-4 py-1.5 text-xs font-bold rounded-lg transition-all"
               :class="calendarMode === m ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'"
@@ -587,12 +878,12 @@ const onDrop = (e, dayDate) => {
           <div class="flex gap-2">
             <button 
               @click="activeView = (activeView === 'code' ? 'view' : 'code')" 
-              class="px-4 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-2"
+              class="px-3 py-2 sm:px-4 sm:py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-2"
               :class="activeView === 'code' ? 'bg-blue-600 text-white' : 'bg-slate-900 text-white hover:bg-slate-800'"
             >
               <Layout v-if="activeView === 'code'" :size="14"/>
               <FileText v-else :size="14"/>
-              {{ activeView === 'code' ? '返回视图' : '源码模式' }}
+              <span class="hidden sm:inline">{{ activeView === 'code' ? '返回视图' : '源码模式' }}</span>
             </button>
           </div>
         </div>
@@ -601,14 +892,14 @@ const onDrop = (e, dayDate) => {
       <main class="flex-1 overflow-hidden flex flex-col relative">
         
         <!-- Calendar View -->
-        <div v-if="activeView === 'calendar'" class="flex-1 flex flex-col p-6 overflow-hidden">
-          <div class="flex justify-between items-center mb-6">
+        <div v-if="activeView === 'calendar'" class="flex-1 flex flex-col p-3 sm:p-6 overflow-hidden">
+          <div class="flex justify-between items-center mb-4 sm:mb-6">
             <div class="flex gap-2">
               <button @click="navigateDate(-1)" class="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors shadow-sm"><ChevronLeft :size="20"/></button>
-              <button @click="viewDate = new Date()" class="px-6 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold hover:bg-slate-50 transition-colors shadow-sm">今天</button>
+              <button @click="viewDate = new Date()" class="px-4 sm:px-6 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold hover:bg-slate-50 transition-colors shadow-sm">今</button>
               <button @click="navigateDate(1)" class="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors shadow-sm"><ChevronRight :size="20"/></button>
             </div>
-            <div class="text-blue-600 font-bold bg-blue-50 px-4 py-2 rounded-full text-sm flex items-center gap-2 shadow-sm border border-blue-100">
+            <div class="text-blue-600 font-bold bg-blue-50 px-4 py-2 rounded-full text-xs sm:text-sm flex items-center gap-2 shadow-sm border border-blue-100">
                 <CalendarDays :size="16"/> {{ calendarMode === 'week' ? '本周日程' : formatDate(viewDate) }}
             </div>
           </div>
@@ -616,19 +907,19 @@ const onDrop = (e, dayDate) => {
           <div class="flex-1 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
             <!-- Header Row -->
             <div class="grid border-b border-slate-100 bg-slate-50/50 shrink-0"
-                 :class="calendarMode === 'month' ? 'grid-cols-7' : 'grid-cols-[80px_1fr]'">
+                 :class="calendarMode === 'month' ? 'grid-cols-7' : 'grid-cols-[50px_1fr] sm:grid-cols-[80px_1fr]'">
                 <template v-if="calendarMode === 'month'">
-                    <div v-for="d in ['周日', '周一', '周二', '周三', '周四', '周五', '周六']" :key="d" 
+                    <div v-for="d in ['日', '一', '二', '三', '四', '五', '六']" :key="d" 
                          class="py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest border-r last:border-0 border-slate-100">
                          {{d}}
                     </div>
                 </template>
                 <template v-else>
-                    <div class="w-20 border-r border-slate-100" />
+                    <div class="w-[50px] sm:w-20 border-r border-slate-100" />
                     <div class="grid w-full" :class="calendarMode === 'day' ? 'grid-cols-1' : 'grid-cols-7'">
                         <div v-for="(day, idx) in calendarDays" :key="idx" class="py-3 text-center border-r last:border-0 border-slate-100">
                             <div class="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
-                                {{ day ? ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date(day.date).getDay()] : '' }}
+                                {{ day ? ['日', '一', '二', '三', '四', '五', '六'][new Date(day.date).getDay()] : '' }}
                             </div>
                             <div class="text-sm font-black mt-1" :class="day?.date === getToday() ? 'text-blue-600 underline underline-offset-4 decoration-2' : 'text-slate-700'">
                                 {{ day ? day.day : '' }}
@@ -645,9 +936,9 @@ const onDrop = (e, dayDate) => {
                 <template v-if="calendarMode === 'day' || calendarMode === 'week'">
                     <div class="relative min-h-[1440px] flex flex-1">
                         <!-- Time Column -->
-                        <div class="w-20 border-r border-slate-100 bg-slate-50/50 shrink-0 sticky left-0 z-30">
+                        <div class="w-[50px] sm:w-20 border-r border-slate-100 bg-slate-50/50 shrink-0 sticky left-0 z-30">
                             <div v-for="hour in hours" :key="hour" class="h-[60px] relative border-b border-slate-50">
-                                <span class="absolute -top-2 right-3 text-[10px] font-bold text-slate-300">
+                                <span class="absolute -top-2 right-1 sm:right-3 text-[10px] font-bold text-slate-300">
                                     {{ String(hour).padStart(2, '0') }}:00
                                 </span>
                             </div>
@@ -679,6 +970,7 @@ const onDrop = (e, dayDate) => {
                                     <div v-if="parseTaskTime(t.date)" 
                                          draggable="true"
                                          @dragstart="(e) => onDragStart(e, t)"
+                                         @click="selectedTaskForEdit = t"
                                          class="absolute left-1.5 right-1.5 px-2 py-1.5 rounded-xl border shadow-sm transition-all hover:shadow-md cursor-grab active:cursor-grabbing z-10 overflow-hidden group/task"
                                          :class="t.completed ? 'bg-slate-50 border-slate-200 text-slate-400 opacity-60' : 'bg-white border-blue-200 text-slate-800 border-l-4 border-l-blue-500'"
                                          :style="{ top: `${parseTaskTime(t.date).totalMinutes}px`, height: '48px' }">
@@ -726,21 +1018,32 @@ const onDrop = (e, dayDate) => {
         </div>
 
         <!-- List View -->
-        <div v-if="activeView === 'view'" class="flex-1 overflow-y-auto p-8 space-y-4 max-w-3xl mx-auto w-full">
-            <div class="flex items-center gap-3 mb-8">
+        <div v-if="activeView === 'view'" class="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4 max-w-3xl mx-auto w-full">
+            <div class="flex items-center gap-3 mb-6 sm:mb-8">
                <div class="p-3 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-100">
                   <ListTodo v-if="selectedFilter.value === 'ALL'" :size="24"/>
                   <component v-else :is="getGTDIcon(selectedFilter.value)" :size="24"/>
                </div>
                <div>
-                  <h1 class="text-2xl font-black text-slate-800 tracking-tight">
+                  <h1 class="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">
                     {{ selectedFilter.value === 'ALL' ? '所有待办' : selectedFilter.value.split(' / ').pop() }}
                   </h1>
-                  <p class="text-xs text-slate-400 font-medium">共 {{ allTasks.filter(t => selectedFilter.value === 'ALL' || t.projectPath.startsWith(selectedFilter.value)).length }} 个任务项</p>
+                  <p class="text-xs text-slate-400 font-medium">
+                    <template v-if="selectedTag">
+                      标签 "#{{ selectedTag }}" 下有 {{ filteredTasks.length }} 个任务
+                    </template>
+                    <template v-else-if="selectedFilter.value === 'ALL'">
+                      共 {{ filteredTasks.length }} 个任务
+                    </template>
+                    <template v-else>
+                      待办 {{ allTasks.filter(t => t.projectPath.startsWith(selectedFilter.value) && !t.completed).length }} / 
+                      共 {{ allTasks.filter(t => t.projectPath.startsWith(selectedFilter.value)).length }} 个任务
+                    </template>
+                  </p>
                </div>
             </div>
 
-            <div class="relative group mb-8">
+            <div class="relative group mb-6 sm:mb-8">
                <Plus class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500 transition-colors" :size="20"/>
                <input 
                   class="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-2xl outline-none shadow-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-medium text-slate-700 placeholder:text-slate-300"
@@ -750,20 +1053,23 @@ const onDrop = (e, dayDate) => {
                />
             </div>
 
-            <div class="space-y-3">
+            <div class="space-y-3 pb-20">
               <TaskCard 
-                v-for="t in allTasks.filter(t => selectedFilter.value === 'ALL' || t.projectPath.startsWith(selectedFilter.value))" 
+                v-for="t in filteredTasks" 
                 :key="t.id" 
                 :task="t" 
                 @toggle="handleToggle" 
                 @delete="handleDeleteTask" 
+                @update="handleUpdateTask"
+                @convert-to-project="handleConvertTaskToProject"
+                @dragstart="onDragStart"
               />
               
-              <div v-if="allTasks.filter(t => selectedFilter.value === 'ALL' || t.projectPath.startsWith(selectedFilter.value)).length === 0" class="py-24 text-center">
+              <div v-if="filteredTasks.length === 0" class="py-12 sm:py-24 text-center">
                  <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
                     <CheckCircle2 :size="32"/>
                  </div>
-                 <p class="text-slate-400 font-medium italic">"你的清单清空了，真是了不起的专注力。"</p>
+                 <p class="text-slate-400 font-medium italic">"没有找到匹配的任务。"</p>
               </div>
             </div>
         </div>
@@ -797,6 +1103,25 @@ const onDrop = (e, dayDate) => {
               @keydown.enter="addTask(quickAddDate)"
             />
             <button @click="addTask(quickAddDate)" class="w-full py-4 bg-blue-600 text-white font-black rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-200 active:scale-95">确定加入日程</button>
+          </div>
+        </div>
+
+        <!-- Task Edit Modal (for Calendar View) -->
+        <div v-if="selectedTaskForEdit" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+          <div class="bg-white w-full max-w-lg p-1 overflow-hidden rounded-3xl shadow-2xl border border-slate-100">
+             <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+               <h3 class="font-black text-slate-800">编辑任务详情</h3>
+               <button @click="selectedTaskForEdit = null" class="p-2 hover:bg-slate-100 rounded-full text-slate-400"><X :size="18"/></button>
+             </div>
+             <div class="p-6">
+               <TaskCard 
+                 :task="selectedTaskForEdit" 
+                 @toggle="handleToggle" 
+                 @delete="(idx) => { handleDeleteTask(idx); selectedTaskForEdit = null; }" 
+                 @update="(idx, updates) => { handleUpdateTask(idx, updates); selectedTaskForEdit = null; }"
+                 @convert-to-project="(idx) => { handleConvertTaskToProject(idx); selectedTaskForEdit = null; }"
+               />
+             </div>
           </div>
         </div>
 
