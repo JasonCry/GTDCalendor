@@ -75,7 +75,7 @@ const getPriorityColor = (prio) => {
   >
     <div v-if="!isEditing" class="flex items-start gap-3">
       <button 
-        @click="emit('toggle', task.lineIndex, task.completed)" 
+        @click.stop="emit('toggle', task.lineIndex, task.completed)" 
         class="mt-1 transition-all shrink-0"
         :class="task.completed ? 'text-emerald-500' : 'text-slate-200 hover:text-blue-500 hover:scale-110 active:scale-90'"
       >

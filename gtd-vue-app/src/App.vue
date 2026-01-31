@@ -2,8 +2,8 @@
 import { ref, computed, watch, onMounted, nextTick, shallowRef, onUnmounted } from 'vue';
 import { 
   CheckCircle2, Layout, FileText, Plus, Menu, Inbox, Hash, Zap, Coffee, Hourglass, 
-  ListTodo, Info, ChevronLeft, ChevronRight, CalendarDays, Clock, Trash2, X, Calendar as CalendarIcon,
-  FolderOpen, Save, RefreshCw, Pin, Search, Eye, EyeOff, Tag, Languages, Settings as SettingsIcon
+  ListTodo, Info, ChevronLeft, ChevronRight, ChevronDown, CalendarDays, Clock, Trash2, X, Calendar,
+  FolderOpen, Save, RefreshCw, Pin, Search, Eye, EyeOff, Tag, Languages, Settings, Sun
 } from 'lucide-vue-next';
 import TaskCard from './components/TaskCard.vue';
 import ProjectItem from './components/ProjectItem.vue';
@@ -74,6 +74,25 @@ const sidebarOpen = ref(true);
 const isSettingsOpen = ref(false);
 const isLanguageDropdownOpen = ref(false);
 const lang = ref(localStorage.getItem('gtd-lang') || 'zh');
+const expandedGroups = ref({'📥 收件箱': true, '⚡ 下一步行动': true});
+const isSaving = ref(false);
+const newTaskInput = ref('');
+const viewDate = ref(new Date());
+const quickAddDate = ref(null);
+
+const vClickOutside = {
+  mounted(el, binding) {
+    el.clickOutsideEvent = (event) => {
+      if (!(el === event.target || el.contains(event.target))) {
+        binding.value(event);
+      }
+    };
+    document.addEventListener('click', el.clickOutsideEvent);
+  },
+  unmounted(el) {
+    document.removeEventListener('click', el.clickOutsideEvent);
+  },
+};
 
 // --- i18n ---
 const t = computed(() => {
@@ -110,7 +129,11 @@ const t = computed(() => {
       projectTitle: '项目清单',
       todayTitle: '今日待办',
       tomorrowTitle: '明日待办',
-      weekTitle: '未来 7 天待办'
+      weekTitle: '未来 7 天待办',
+      inbox: '收件箱',
+      nextActions: '下一步行动',
+      waitingFor: '等待确认',
+      somedayMaybe: '将来/也许'
     },
     en: {
       allTasks: 'All Tasks',
@@ -144,11 +167,23 @@ const t = computed(() => {
       projectTitle: 'Project',
       todayTitle: 'Today\'s Tasks',
       tomorrowTitle: 'Tomorrow\'s Tasks',
-      weekTitle: 'Next 7 Days'
+      weekTitle: 'Next 7 Days',
+      inbox: 'Inbox',
+      nextActions: 'Next Actions',
+      waitingFor: 'Waiting For',
+      somedayMaybe: 'Someday/Maybe'
     }
   };
   return translations[lang.value];
 });
+
+const getLocalizedName = (name) => {
+  if (name.includes('收件箱') || name.toLowerCase().includes('inbox')) return `📥 ${t.value.inbox}`;
+  if (name.includes('下一步') || name.toLowerCase().includes('next action')) return `⚡ ${t.value.nextActions}`;
+  if (name.includes('等待') || name.toLowerCase().includes('waiting')) return `⏳ ${t.value.waitingFor}`;
+  if (name.includes('将来') || name.toLowerCase().includes('someday')) return `☕ ${t.value.somedayMaybe}`;
+  return name;
+};
 
 const getHeaderTitle = computed(() => {
   if (activeView.value === 'calendar') {
@@ -157,15 +192,18 @@ const getHeaderTitle = computed(() => {
       : `${viewDate.value.toLocaleString('en-US', { month: 'long' })} ${viewDate.value.getFullYear()}`;
   }
   
-  if (selectedFilter.value.type === 'all') return t.value.allTasksTitle;
-  if (selectedFilter.value.type === 'time') {
-    if (selectedFilter.value.value === 'today') return t.value.todayTitle;
-    if (selectedFilter.value.value === 'tomorrow') return t.value.tomorrowTitle;
-    if (selectedFilter.value.value === 'week') return t.value.weekTitle;
+  const filter = selectedFilter.value;
+  if (!filter) return '';
+
+  if (filter.type === 'all') return t.value.allTasksTitle;
+  if (filter.type === 'time') {
+    if (filter.value === 'today') return t.value.todayTitle;
+    if (filter.value === 'tomorrow') return t.value.tomorrowTitle;
+    if (filter.value === 'week') return t.value.weekTitle;
   }
-  if (selectedFilter.value.type === 'project') {
-    const name = selectedFilter.value.value.split(' / ').pop();
-    return `${name} ${t.value.projectTitle}`;
+  if (filter.type === 'project') {
+    const name = filter.value.split(' / ').pop();
+    return `${getLocalizedName(name)} ${t.value.projectTitle}`;
   }
   return '';
 });
@@ -191,6 +229,8 @@ const pendingDefaultHandle = shallowRef(null);
 
 // --- Computed ---
 const parsedData = computed(() => {
+  // Use lang.value here to ensure this re-calculates on language change
+  const currentLang = lang.value;
   const lines = markdown.value.split('\n');
   const root = { name: 'Root', children: [], tasks: [], level: 0, path: '' };
   const stack = [root];
@@ -203,9 +243,10 @@ const parsedData = computed(() => {
     if (trimmed.startsWith('#')) {
       currentTask = null;
       const level = (trimmed.match(/^#+/) || ['#'])[0].length;
-      const nodeName = trimmed.replace(/^#+\s*/, '');
+      const nodeName = trimmed.replace(/^#+\s*/, '').trim();
       const node = { 
         name: nodeName, 
+        displayName: getLocalizedName(nodeName),
         children: [], tasks: [], level, path: '' 
       };
       while (stack.length > 1 && stack[stack.length - 1].level >= level) stack.pop();
@@ -242,7 +283,6 @@ const parsedData = computed(() => {
       currentTask.notes.push(trimmed);
       currentTask.lineCount++;
     } else if (trimmed === '' && currentTask) {
-      // Potentially part of a note if next line is indented, but for now we simplify
       currentTask = null;
     } else {
       currentTask = null;
@@ -250,8 +290,8 @@ const parsedData = computed(() => {
   });
 
   const calculateStats = (node) => {
-    let incomplete = node.tasks.filter(t => !t.completed).length;
-    node.children.forEach(child => {
+    let incomplete = (node.tasks || []).filter(t => !t.completed).length;
+    (node.children || []).forEach(child => {
       const stats = calculateStats(child);
       incomplete += stats.incomplete;
     });
@@ -264,12 +304,17 @@ const parsedData = computed(() => {
   return { projects: root.children, allTasks: all };
 });
 
-const projects = computed(() => parsedData.value.projects);
-const allTasks = computed(() => parsedData.value.allTasks);
+const projects = computed(() => parsedData.value?.projects || []);
+const allTasks = computed(() => parsedData.value?.allTasks || []);
 
 const allTags = computed(() => {
   const tags = new Set();
-  allTasks.value.forEach(t => t.tags.forEach(tag => tags.add(tag)));
+  const tasks = allTasks.value || [];
+  tasks.forEach(t => {
+    if (t.tags) {
+      t.tags.forEach(tag => tags.add(tag));
+    }
+  });
   return Array.from(tags).sort();
 });
 
@@ -287,7 +332,7 @@ const filteredTasks = computed(() => {
   nextWeekDate.setDate(nextWeekDate.getDate() + 7);
   const nextWeek = formatDate(nextWeekDate);
 
-  return allTasks.value.filter(t => {
+  return (allTasks.value || []).filter(t => {
     // Project/Time Filter
     let matchFilter = true;
     if (filter.type === 'project') {
@@ -302,11 +347,11 @@ const filteredTasks = computed(() => {
       }
     }
 
-    const tagMatch = !tag || t.tags.includes(tag);
+    const tagMatch = !tag || (t.tags && t.tags.includes(tag));
     const searchMatch = !query || 
       t.content.toLowerCase().includes(query) ||
       t.projectPath.toLowerCase().includes(query) ||
-      t.tags.some(tg => tg.toLowerCase().includes(query));
+      (t.tags && t.tags.some(tg => tg.toLowerCase().includes(query)));
     const completedMatch = !hideCompleted.value || !t.completed;
     
     return matchFilter && tagMatch && searchMatch && completedMatch;
@@ -333,6 +378,7 @@ const activeProjects = computed(() => {
 
 const calendarDays = computed(() => {
   const days = [];
+  const tasks = allTasks.value || [];
   if (calendarMode.value === 'month') {
     const year = viewDate.value.getFullYear();
     const month = viewDate.value.getMonth();
@@ -341,7 +387,7 @@ const calendarDays = computed(() => {
     for (let i = 0; i < firstDay; i++) days.push(null);
     for (let i = 1; i <= daysInMonth; i++) {
       const d = formatDate(new Date(year, month, i));
-      days.push({ date: d, day: i, tasks: allTasks.value.filter(t => isDateInRange(d, t.date)) });
+      days.push({ date: d, day: i, tasks: tasks.filter(t => isDateInRange(d, t.date)) });
     }
   } else if (calendarMode.value === 'week') {
     const start = getStartOfWeek(viewDate.value);
@@ -349,11 +395,11 @@ const calendarDays = computed(() => {
       const d = new Date(start);
       d.setDate(start.getDate() + i);
       const ds = formatDate(d);
-      days.push({ date: ds, day: d.getDate(), tasks: allTasks.value.filter(t => isDateInRange(ds, t.date)) });
+      days.push({ date: ds, day: d.getDate(), tasks: tasks.filter(t => isDateInRange(ds, t.date)) });
     }
   } else if (calendarMode.value === 'day') {
     const ds = formatDate(viewDate.value);
-    days.push({ date: ds, day: viewDate.value.getDate(), tasks: allTasks.value.filter(t => isDateInRange(ds, t.date)) });
+    days.push({ date: ds, day: viewDate.value.getDate(), tasks: tasks.filter(t => isDateInRange(ds, t.date)) });
   }
   return days;
 });
@@ -364,7 +410,14 @@ const timeSlots = Array.from({ length: 24 * 4 }, (_, i) => i * 15);
 // --- Actions ---
 const handleToggle = (idx, status) => {
   const lines = markdown.value.split('\n');
-  lines[idx] = status ? lines[idx].replace('- [x]', '- [ ]') : lines[idx].replace('- [ ]', '- [x]');
+  const line = lines[idx];
+  if (!line) return;
+  
+  if (status) {
+    lines[idx] = line.replace(/^- \[x\]/, '- [ ]');
+  } else {
+    lines[idx] = line.replace(/^- \[ \]/, '- [x]');
+  }
   markdown.value = lines.join('\n');
 };
 
@@ -396,7 +449,8 @@ const handleDeleteTask = (idx) => {
 
 const handleMoveTaskToProject = (lineIndex, targetProjectPath) => {
   const lines = markdown.value.split('\n');
-  const task = allTasks.value.find(t => parseInt(t.lineIndex) === parseInt(lineIndex));
+  const tasksArray = allTasks.value || [];
+  const task = tasksArray.find(t => parseInt(t.lineIndex) === parseInt(lineIndex));
   if (!task) return;
 
   const lineCount = task.lineCount || 1;
@@ -435,10 +489,11 @@ const activeProjectsDragOver = ref(null);
 
 const handleConvertTaskToProject = (lineIndex) => {
   const lines = markdown.value.split('\n');
-  const task = allTasks.value.find(t => parseInt(t.lineIndex) === parseInt(lineIndex));
+  const tasksArray = allTasks.value || [];
+  const task = tasksArray.find(t => parseInt(t.lineIndex) === parseInt(lineIndex));
   if (!task) return;
 
-  const currentLevel = task.projectPath.split(' / ').length;
+  const currentLevel = (task.projectPath || '').split(' / ').length;
   const newHeading = '#'.repeat(currentLevel + 1) + ' ' + task.content;
   
   lines[lineIndex] = newHeading;
@@ -449,6 +504,26 @@ const handleAddProject = () => {
   const lines = markdown.value.split('\n');
   lines.push('', '# 新建项目');
   markdown.value = lines.join('\n');
+};
+
+const handleUpdateProject = (oldPath, newName) => {
+  const lines = markdown.value.split('\n');
+  const pathParts = oldPath.split(' / ');
+  const oldName = pathParts[pathParts.length - 1];
+  const level = pathParts.length;
+
+  const index = lines.findIndex(l => {
+    if (!l.startsWith('#')) return false;
+    const lLevel = (l.match(/^#+/) || ['#'])[0].length;
+    const lName = l.replace(/^#+\s*/, '').trim();
+    return lName === oldName && lLevel === level;
+  });
+
+  if (index !== -1) {
+    const hashes = '#'.repeat(level);
+    lines[index] = `${hashes} ${newName}`;
+    markdown.value = lines.join('\n');
+  }
 };
 
 const handleDeleteProject = (path) => {
@@ -816,19 +891,19 @@ const onDrop = (e, dayDate) => {
     <div :class="[sidebarOpen ? 'w-80' : 'w-0', 'bg-white border-r border-slate-200 transition-all duration-300 flex flex-col overflow-hidden z-20']">
       <div class="p-6 flex items-center justify-between">
          <div class="relative">
-           <div @click="isLanguageDropdownOpen = !isLanguageDropdownOpen" class="flex items-center gap-3 font-black text-xl text-blue-600 cursor-pointer hover:bg-slate-50 p-2 -m-2 rounded-xl transition-all">
+           <div @click.stop="isLanguageDropdownOpen = !isLanguageDropdownOpen" class="flex items-center gap-3 font-black text-xl text-blue-600 cursor-pointer hover:bg-slate-50 p-2 -m-2 rounded-xl transition-all">
              <CheckCircle2 class="w-8 h-8" /> <span>GTD Flow</span>
              <ChevronDown :size="16" class="text-slate-400" />
            </div>
            
            <!-- Logo Dropdown Menu -->
-           <div v-if="isLanguageDropdownOpen" class="absolute left-0 mt-4 w-48 bg-white border border-slate-100 rounded-2xl shadow-xl z-50 py-2 animate-in fade-in zoom-in-95 duration-200">
+           <div v-if="isLanguageDropdownOpen" v-click-outside="() => isLanguageDropdownOpen = false" class="absolute left-0 mt-4 w-48 bg-white border border-slate-100 rounded-2xl shadow-xl z-50 py-2 animate-in fade-in zoom-in-95 duration-200">
              <button @click="toggleLang(); isLanguageDropdownOpen = false" class="w-full text-left px-4 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-3">
                <Languages :size="18" class="text-slate-400"/>
                {{ lang === 'zh' ? 'English' : '中文' }}
              </button>
              <button @click="isSettingsOpen = true; isLanguageDropdownOpen = false" class="w-full text-left px-4 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-3">
-               <SettingsIcon :size="18" class="text-slate-400"/>
+               <Settings :size="18" class="text-slate-400"/>
                {{ t.settings }}
              </button>
            </div>
@@ -883,7 +958,7 @@ const onDrop = (e, dayDate) => {
           <div @click="selectedFilter = {type: 'time', value: 'tomorrow'}; activeView = 'view'" 
                class="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-xl transition-all group"
                :class="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
-            <CalendarIcon :size="20" :class="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+            <Calendar :size="20" :class="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
             <span class="text-sm font-bold">{{ t.tomorrow }}</span>
           </div>
 
@@ -897,7 +972,7 @@ const onDrop = (e, dayDate) => {
           <div @click="activeView = 'calendar'" 
                class="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-xl transition-all group"
                :class="activeView === 'calendar' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
-            <CalendarIcon :size="20" :class="activeView === 'calendar' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+            <Calendar :size="20" :class="activeView === 'calendar' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
             <span class="text-sm font-bold">{{ t.calendar }}</span>
           </div>
         </nav>
@@ -925,11 +1000,11 @@ const onDrop = (e, dayDate) => {
                @drop="activeProjectsDragOver = null; onSidebarDrop($event, p.path)"
                class="flex items-center gap-3 px-4 py-1.5 cursor-pointer rounded-xl transition-all group border-2 border-transparent"
                :class="[
-                 selectedFilter.value === p.path ? 'bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-50',
+                 selectedFilter.type === 'project' && selectedFilter.value === p.path ? 'bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-100',
                  activeProjectsDragOver === p.path ? 'border-blue-400 bg-blue-50' : ''
                ]">
             <div class="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
-            <span class="text-sm font-bold truncate flex-1">{{ p.name }}</span>
+            <span class="text-sm font-bold truncate flex-1">{{ p.displayName }}</span>
             <span class="text-[10px] font-bold text-slate-400">{{ p.incompleteCount }}</span>
           </div>
         </nav>
@@ -945,8 +1020,9 @@ const onDrop = (e, dayDate) => {
             <ProjectItem 
               :node="p" 
               :expanded="expandedGroups[p.path]"
+              :icon="getGTDIcon(p.name)"
               :tip="getGTDTips(p.name)"
-              :active="selectedFilter.value === p.path && activeView === 'view'"
+              :active="selectedFilter.type === 'project' && selectedFilter.value === p.path && activeView === 'view'"
               @toggle="expandedGroups[p.path] = !expandedGroups[p.path]"
               @select="(node) => { selectedFilter = {type: 'project', value: node.path}; activeView = 'view'; }"
               @rename="handleUpdateProject"
@@ -978,7 +1054,7 @@ const onDrop = (e, dayDate) => {
       <div class="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-100 overflow-hidden">
         <div class="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
           <h3 class="font-black text-slate-800 flex items-center gap-2">
-            <SettingsIcon :size="20" class="text-blue-600"/>
+            <Settings :size="20" class="text-blue-600"/>
             {{ t.settings }}
           </h3>
           <button @click="isSettingsOpen = false" class="p-2 hover:bg-slate-100 rounded-full text-slate-400 transition-all"><X :size="20"/></button>
@@ -1218,7 +1294,7 @@ const onDrop = (e, dayDate) => {
                <div class="p-3 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-100">
                   <ListTodo v-if="selectedFilter.type === 'all'" :size="24"/>
                   <Sun v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'today'" :size="24"/>
-                  <CalendarIcon v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow'" :size="24"/>
+                  <Calendar v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow'" :size="24"/>
                   <CalendarDays v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'week'" :size="24"/>
                   <component v-else :is="getGTDIcon(selectedFilter.value)" :size="24"/>
                </div>
@@ -1230,12 +1306,12 @@ const onDrop = (e, dayDate) => {
                     <template v-if="selectedTag">
                       {{ t.tags }} "#{{ selectedTag }}" : {{ filteredTasks.length }}
                     </template>
-                    <template v-else-if="selectedFilter.type === 'all' || selectedFilter.type === 'time'">
-                      {{ filteredTasks.length }} {{ t.allTasks }}
+                    <template v-else-if="selectedFilter?.type === 'all' || selectedFilter?.type === 'time'">
+                      {{ (filteredTasks || []).length }} {{ t.allTasks }}
                     </template>
-                    <template v-else>
-                      {{ t.todayTitle }}: {{ allTasks.filter(t => t.projectPath.startsWith(selectedFilter.value) && !t.completed).length }} / 
-                      {{ t.allTasks }}: {{ allTasks.filter(t => t.projectPath.startsWith(selectedFilter.value)).length }}
+                    <template v-else-if="selectedFilter">
+                      {{ t.todayTitle }}: {{ (allTasks || []).filter(t => t.projectPath && t.projectPath.startsWith(selectedFilter.value) && !t.completed).length }} / 
+                      {{ t.allTasks }}: {{ (allTasks || []).filter(t => t.projectPath && t.projectPath.startsWith(selectedFilter.value)).length }}
                     </template>
                   </p>
                </div>

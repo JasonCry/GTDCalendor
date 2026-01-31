@@ -6,7 +6,7 @@ const props = defineProps({
   node: { type: Object, required: true },
   expanded: { type: Boolean, default: false },
   active: { type: Boolean, default: false },
-  icon: { type: Object, default: null }, // Expecting a Vue Component or VNode
+  icon: { type: [Object, Function], default: null }, 
   tip: { type: String, default: '' }
 });
 
@@ -33,6 +33,24 @@ const onDrop = (e) => {
     console.error('Drop error:', err);
   }
 };
+
+const startRenaming = (e) => {
+  e.stopPropagation();
+  editName.value = props.node.name;
+  isEditing.value = true;
+  nextTick(() => inputRef.value?.focus());
+};
+
+const saveRename = () => {
+  if (editName.value.trim() && editName.value !== props.node.name) {
+    emit('rename', props.node.path, editName.value.trim());
+  }
+  isEditing.value = false;
+};
+
+const cancelRename = () => {
+  isEditing.value = false;
+};
 </script>
 
 <template>
@@ -58,7 +76,8 @@ const onDrop = (e) => {
           <ChevronRight v-else :size="16" class="stroke-[3]"/>
         </template>
         <template v-else>
-          <div class="w-4" />
+          <component :is="icon" v-if="icon" :size="16" class="text-slate-400"/>
+          <div v-else class="w-4" />
         </template>
       </button>
       
@@ -74,7 +93,7 @@ const onDrop = (e) => {
       </div>
       <template v-else>
         <span class="text-sm truncate flex-1 tracking-tight" :class="active ? 'font-black' : 'font-bold'">
-          {{ node.name }}
+          {{ node.displayName || node.name }}
         </span>
         
         <button 
