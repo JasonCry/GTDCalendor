@@ -1,11 +1,13 @@
 <script setup>
-import { ref, computed, watch, onMounted, nextTick, shallowRef } from 'vue';
+import { ref, computed, watch, onMounted, nextTick, shallowRef, onUnmounted } from 'vue';
 import { 
   CheckCircle2, Layout, FileText, Plus, Menu, Inbox, Hash, Zap, Coffee, Hourglass, 
-  ListTodo, Info, ChevronLeft, ChevronRight, CalendarDays, Clock, Trash2, X, Calendar as CalendarIcon
+  ListTodo, Info, ChevronLeft, ChevronRight, CalendarDays, Clock, Trash2, X, Calendar as CalendarIcon,
+  FolderOpen, Save, RefreshCw, Pin
 } from 'lucide-vue-next';
 import TaskCard from './components/TaskCard.vue';
 import ProjectItem from './components/ProjectItem.vue';
+import { saveFileHandle, getFileHandle, removeFileHandle } from './utils/fileStorage';
 
 // --- Utils ---
 const formatDate = (date) => date.toISOString().split('T')[0];
@@ -77,6 +79,13 @@ const selectionEnd = ref(null);
 const isSelecting = ref(false);
 
 const scrollRef = ref(null);
+const currentFileHandle = shallowRef(null); // File System Access API Handle
+const lastDiskModified = ref(0);
+const fileCheckTimer = ref(null);
+const autoSaveTimer = ref(null);
+const fileChangedOnDisk = ref(false);
+const isDefaultFile = ref(false);
+const pendingDefaultHandle = shallowRef(null);
 
 // --- Computed ---
 const parsedData = computed(() => {
@@ -177,8 +186,8 @@ const addTask = (dateInfo = null) => {
   }
 
   if (insertIdx <= 0) insertIdx = lines.findIndex(l => l.startsWith('#')) + 1;
-  if (insertIdx <= 0) { lines.push('# 📥 收件箱', content); }
-  else { lines.splice(insertIdx, 0, content); }
+  if (insertIdx <= 0) { lines.push('# 📥 收件箱', content); } 
+  else { lines.splice(insertIdx, 0, content); } 
   
   markdown.value = lines.join('\n');
   newTaskInput.value = '';
@@ -190,7 +199,7 @@ const moveTask = (lineIndex, newDate, newTime) => {
   const targetLine = lines[lineIndex];
   if (!targetLine) return;
 
-  const datePattern = /@\d{4}-\d{2}-\d{2}(~\d{4}-\d{2}-\d{2})?(\s\d{2}:\d{2}(~\d{2}:\d{2})?)?/;
+  const datePattern = /@\d{4}-\d{2}-\d{2}(~\d{4}-\d{2}-\d{2})?(\s\d{2}:\d{2}(~\d{2}:\d{2})?)?/; 
   const newDateString = newTime ? `${newDate} ${newTime}` : newDate;
   
   let newLine;
@@ -202,6 +211,131 @@ const moveTask = (lineIndex, newDate, newTime) => {
   
   lines[lineIndex] = newLine;
   markdown.value = lines.join('\n');
+};
+
+// --- File System Actions ---
+const verifyPermission = async (fileHandle, withWrite) => {
+  const options = {};
+  if (withWrite) {
+    options.mode = 'readwrite';
+  }
+  if ((await fileHandle.queryPermission(options)) === 'granted') {
+    return true;
+  }
+  if ((await fileHandle.requestPermission(options)) === 'granted') {
+    return true;
+  }
+  return false;
+};
+
+const startFileWatcher = () => {
+  if (fileCheckTimer.value) clearInterval(fileCheckTimer.value);
+  fileCheckTimer.value = setInterval(async () => {
+    if (!currentFileHandle.value || isSaving.value) return;
+    try {
+      const file = await currentFileHandle.value.getFile();
+      // Allow 1s buffer for file system quirks
+      if (file.lastModified > lastDiskModified.value + 1000) {
+        fileChangedOnDisk.value = true;
+        clearInterval(fileCheckTimer.value);
+      }
+    } catch(e) { console.error('File watcher error:', e); }
+  }, 2000);
+};
+
+const loadFileContent = async (handle) => {
+  const file = await handle.getFile();
+  const contents = await file.text();
+  markdown.value = contents;
+  currentFileHandle.value = handle;
+  lastDiskModified.value = file.lastModified;
+  fileChangedOnDisk.value = false;
+  
+  // Check if this is the stored default
+  const defaultHandle = await getFileHandle();
+  isDefaultFile.value = defaultHandle && (await handle.isSameEntry(defaultHandle));
+  
+  startFileWatcher();
+};
+
+const handleOpenFile = async () => {
+  try {
+    const [handle] = await window.showOpenFilePicker({
+      types: [{ description: 'Markdown Files', accept: { 'text/markdown': ['.md'] } }],
+      multiple: false
+    });
+    await loadFileContent(handle);
+  } catch (err) {
+    if (err.name !== 'AbortError') console.error('Error opening file:', err);
+  }
+};
+
+const saveToFile = async () => {
+  if (!currentFileHandle.value) return;
+  try {
+    const writable = await currentFileHandle.value.createWritable();
+    await writable.write(markdown.value);
+    await writable.close();
+    
+    // Update lastDiskModified so we don't trigger our own watcher
+    const file = await currentFileHandle.value.getFile();
+    lastDiskModified.value = file.lastModified;
+    
+    setIsSaving(false);
+  } catch (err) {
+    console.error('Error saving file:', err);
+    setIsSaving(false);
+  }
+};
+
+const handleSaveFile = async () => {
+  if (!currentFileHandle.value) {
+    return handleSaveAs();
+  }
+  setIsSaving(true);
+  await saveToFile();
+};
+
+const handleSaveAs = async () => {
+  try {
+    const handle = await window.showSaveFilePicker({
+      types: [{ description: 'Markdown Files', accept: { 'text/markdown': ['.md'] } }],
+    });
+    // Write immediately on Save As
+    const writable = await handle.createWritable();
+    await writable.write(markdown.value);
+    await writable.close();
+    
+    await loadFileContent(handle);
+  } catch (err) {
+    if (err.name !== 'AbortError') console.error('Error saving file:', err);
+  }
+};
+
+const toggleDefaultFile = async () => {
+  if (!currentFileHandle.value) return;
+  if (isDefaultFile.value) {
+    await removeFileHandle();
+    isDefaultFile.value = false;
+  } else {
+    await saveFileHandle(currentFileHandle.value);
+    isDefaultFile.value = true;
+  }
+};
+
+const reloadFileFromDisk = async () => {
+  if (currentFileHandle.value) {
+    await loadFileContent(currentFileHandle.value);
+  }
+};
+
+const loadPendingDefault = async () => {
+  if (pendingDefaultHandle.value) {
+    if (await verifyPermission(pendingDefaultHandle.value, true)) {
+       await loadFileContent(pendingDefaultHandle.value);
+       pendingDefaultHandle.value = null;
+    }
+  }
 };
 
 // --- Selection Logic ---
@@ -261,7 +395,15 @@ const getGTDTips = (name) => {
 watch(markdown, (newVal) => {
   setIsSaving(true);
   localStorage.setItem('gtd-markdown', newVal);
-  setTimeout(() => setIsSaving(false), 500);
+  
+  if (currentFileHandle.value) {
+    if (autoSaveTimer.value) clearTimeout(autoSaveTimer.value);
+    autoSaveTimer.value = setTimeout(() => {
+        saveToFile();
+    }, 2000);
+  } else {
+    setTimeout(() => setIsSaving(false), 500);
+  }
 });
 
 const setIsSaving = (val) => isSaving.value = val;
@@ -278,6 +420,25 @@ watch([activeView, calendarMode], async () => {
   }
 });
 
+onMounted(async () => {
+    try {
+        const defaultHandle = await getFileHandle();
+        if (defaultHandle) {
+             const perm = await defaultHandle.queryPermission({mode: 'readwrite'});
+             if (perm === 'granted') {
+                 await loadFileContent(defaultHandle);
+             } else {
+                 pendingDefaultHandle.value = defaultHandle;
+             }
+        }
+    } catch (e) { console.error('Error loading default file:', e); }
+});
+
+onUnmounted(() => {
+    if (fileCheckTimer.value) clearInterval(fileCheckTimer.value);
+    if (autoSaveTimer.value) clearTimeout(autoSaveTimer.value);
+});
+
 // --- Drag & Drop ---
 const onDragStart = (e, task) => {
   e.dataTransfer.setData('task', JSON.stringify(task));
@@ -287,13 +448,7 @@ const onDrop = (e, dayDate) => {
   const taskData = JSON.parse(e.dataTransfer.getData('task'));
   const rect = e.currentTarget.getBoundingClientRect();
   const y = e.clientY - rect.top;
-  const minutesTotal = Math.floor(y); // Approximation based on px height (1440px total)
-  // Our CSS sets height to 1440px via the grid, but we need to match the ref's scrollHeight potentially
-  // Actually in the template we render 15px slots. So 1px approx 1min.
-  // wait, the code says 1440px for total height?
-  // The React code relied on `e.clientY - rect.top`.
-  // With 15px per 15min slot, 1px = 1min. Correct.
-  
+  const minutesTotal = Math.floor(y); 
   const snappedMinutes = Math.round(minutesTotal / 15) * 15;
   const timeStr = formatMinutesToTime(Math.min(snappedMinutes, 1425));
   if (dayDate) moveTask(taskData.lineIndex, dayDate, timeStr);
@@ -310,22 +465,63 @@ const onDrop = (e, dayDate) => {
            <CheckCircle2 class="w-8 h-8" /> <span>GTD Flow</span>
          </div>
          <div class="px-2 py-1 rounded text-[10px] font-bold border" :class="isSaving ? 'text-amber-500 bg-amber-50 border-amber-100' : 'text-emerald-500 bg-emerald-50 border-emerald-100'">
-            {{ isSaving ? 'SAVING...' : 'V1.1.0' }}
+            {{ isSaving ? 'SAVING...' : 'V0.0.2' }}
          </div>
       </div>
       
       <div class="flex-1 overflow-y-auto px-4 space-y-6 pb-10">
+        <!-- File Management Section -->
+        <nav class="space-y-1">
+           <div class="px-4 text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">文件管理</div>
+           
+           <div v-if="pendingDefaultHandle" @click="loadPendingDefault" 
+                class="mx-4 mb-2 p-3 bg-amber-50 text-amber-600 rounded-2xl text-xs font-bold cursor-pointer hover:bg-amber-100 transition-colors border border-amber-100 flex items-center gap-2">
+             <RefreshCw :size="16" />
+             <span>重连默认文件...</span>
+           </div>
+
+           <div v-if="fileChangedOnDisk" class="mx-4 mb-2 p-3 bg-red-50 text-red-600 rounded-2xl text-xs font-bold border border-red-100">
+             <div class="flex items-center gap-2 mb-2">
+                <RefreshCw :size="16" class="animate-spin"/>
+                <span>文件外部已更改</span>
+             </div>
+             <button @click="reloadFileFromDisk" class="w-full py-1.5 bg-red-100 hover:bg-red-200 rounded-lg transition-colors text-red-700">重新加载</button>
+           </div>
+           
+           <div class="flex items-center gap-2 px-4 py-1">
+               <button @click="handleOpenFile" 
+                       class="flex-1 p-2.5 flex items-center justify-center rounded-xl bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-blue-600 transition-all border border-slate-100 shadow-sm active:scale-95" 
+                       title="打开本地文件">
+                   <FolderOpen :size="18" />
+               </button>
+
+               <button @click="handleSaveFile" 
+                       class="flex-1 p-2.5 flex items-center justify-center rounded-xl bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-emerald-600 transition-all border border-slate-100 shadow-sm active:scale-95"
+                       :title="currentFileHandle ? '保存更改' : '另存为...'">
+                   <Save :size="18" />
+               </button>
+
+               <button v-if="currentFileHandle" 
+                       @click="toggleDefaultFile" 
+                       class="flex-1 p-2.5 flex items-center justify-center rounded-xl border shadow-sm transition-all active:scale-95"
+                       :class="isDefaultFile ? 'bg-amber-50 border-amber-100 text-amber-500' : 'bg-slate-50 border-slate-100 text-slate-400 hover:bg-slate-100 hover:text-amber-500'"
+                       :title="isDefaultFile ? '已设为默认文件' : '设为默认文件'">
+                   <Pin :size="18" :class="isDefaultFile ? 'fill-current' : ''"/>
+               </button>
+           </div>
+        </nav>
+
         <nav class="space-y-1">
           <div class="px-4 text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 mt-8 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">主视图切换</div>
           
-          <div @click="selectedFilter = {type: 'all', value: 'ALL'}; activeView = 'view'"
+          <div @click="selectedFilter = {type: 'all', value: 'ALL'}; activeView = 'view'" 
                class="flex items-center gap-3 px-4 py-3 cursor-pointer rounded-2xl font-black transition-all group"
                :class="activeView === 'view' && selectedFilter.value === 'ALL' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 translate-x-1' : 'text-slate-500 hover:bg-slate-100 hover:translate-x-1'">
             <ListTodo :size="18" :class="activeView === 'view' && selectedFilter.value === 'ALL' ? 'text-white' : 'text-slate-300 group-hover:text-blue-500'"/>
             <span class="text-xs">清单模式</span>
           </div>
           
-          <div @click="activeView = 'calendar'"
+          <div @click="activeView = 'calendar'" 
                class="flex items-center gap-3 px-4 py-3 cursor-pointer rounded-2xl font-black transition-all group"
                :class="activeView === 'calendar' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 translate-x-1' : 'text-slate-500 hover:bg-slate-100 hover:translate-x-1'">
             <CalendarIcon :size="18" :class="activeView === 'calendar' ? 'text-white' : 'text-slate-300 group-hover:text-blue-500'"/>
@@ -352,6 +548,11 @@ const onDrop = (e, dayDate) => {
            <div class="flex items-center gap-2 text-slate-400 mb-2">
               <Info :size="14"/>
               <span class="text-[10px] font-bold uppercase tracking-wider">GTD 核心理念</span>
+           </div>
+           <div v-if="currentFileHandle" class="mb-2">
+               <span class="text-[9px] bg-emerald-50 text-emerald-600 border border-emerald-100 px-1.5 py-0.5 rounded font-mono break-all">
+                  {{ currentFileHandle.name }}
+               </span>
            </div>
            <p class="text-[11px] text-slate-500 leading-relaxed italic">
               捕捉、理清、组织、回顾、执行。
