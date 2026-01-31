@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, nextTick, shallowRef, onUnmounted } fr
 import { 
   CheckCircle2, Layout, FileText, Plus, Menu, Inbox, Hash, Zap, Coffee, Hourglass, 
   ListTodo, Info, ChevronLeft, ChevronRight, CalendarDays, Clock, Trash2, X, Calendar as CalendarIcon,
-  FolderOpen, Save, RefreshCw, Pin, Search, Eye, EyeOff, Tag
+  FolderOpen, Save, RefreshCw, Pin, Search, Eye, EyeOff, Tag, Languages, Settings as SettingsIcon
 } from 'lucide-vue-next';
 import TaskCard from './components/TaskCard.vue';
 import ProjectItem from './components/ProjectItem.vue';
@@ -71,11 +71,109 @@ const selectedTag = ref(null);
 const searchQuery = ref('');
 const hideCompleted = ref(false);
 const sidebarOpen = ref(true);
-const newTaskInput = ref('');
-const expandedGroups = ref({'📥 收件箱': true, '⚡ 下一步行动': true});
-const isSaving = ref(false);
-const viewDate = ref(new Date());
-const quickAddDate = ref(null);
+const isSettingsOpen = ref(false);
+const isLanguageDropdownOpen = ref(false);
+const lang = ref(localStorage.getItem('gtd-lang') || 'zh');
+
+// --- i18n ---
+const t = computed(() => {
+  const translations = {
+    zh: {
+      allTasks: '所有任务',
+      today: '今天',
+      tomorrow: '明天',
+      next7Days: '最近 7 天',
+      calendar: '日历日程',
+      tags: '标签',
+      activeProjects: '活跃项目',
+      workflows: '工作流与目录',
+      settings: '设置',
+      language: '语言',
+      fileManagement: '文件管理',
+      openFile: '打开本地文件',
+      saveFile: '保存更改',
+      saveAs: '另存为',
+      setDefault: '设为默认',
+      unsetDefault: '取消默认',
+      saving: '保存中...',
+      searchPlaceholder: '搜索任务、项目或标签...',
+      newProject: '新建项目',
+      viewSettings: '视图设置',
+      hideCompleted: '隐藏已完成任务',
+      all: '全部',
+      editTask: '编辑任务详情',
+      confirmDelete: '确定要删除项目 "{name}" 及其所有任务吗？',
+      quickAddPlaceholder: '捕捉灵感...',
+      timePlaceholder: '这个时段你要做什么？',
+      addToSchedule: '确定加入日程',
+      allTasksTitle: '所有任务清单',
+      projectTitle: '项目清单',
+      todayTitle: '今日待办',
+      tomorrowTitle: '明日待办',
+      weekTitle: '未来 7 天待办'
+    },
+    en: {
+      allTasks: 'All Tasks',
+      today: 'Today',
+      tomorrow: 'Tomorrow',
+      next7Days: 'Next 7 Days',
+      calendar: 'Calendar',
+      tags: 'Tags',
+      activeProjects: 'Active Projects',
+      workflows: 'Workflows & Folders',
+      settings: 'Settings',
+      language: 'Language',
+      fileManagement: 'File Management',
+      openFile: 'Open Local File',
+      saveFile: 'Save Changes',
+      saveAs: 'Save As...',
+      setDefault: 'Set as Default',
+      unsetDefault: 'Unset Default',
+      saving: 'SAVING...',
+      searchPlaceholder: 'Search tasks, projects, tags...',
+      newProject: 'New Project',
+      viewSettings: 'View Settings',
+      hideCompleted: 'Hide Completed',
+      all: 'All',
+      editTask: 'Edit Task Details',
+      confirmDelete: 'Delete project "{name}" and all its tasks?',
+      quickAddPlaceholder: 'Capture inspiration...',
+      timePlaceholder: 'What are you doing?',
+      addToSchedule: 'Add to Schedule',
+      allTasksTitle: 'All Tasks',
+      projectTitle: 'Project',
+      todayTitle: 'Today\'s Tasks',
+      tomorrowTitle: 'Tomorrow\'s Tasks',
+      weekTitle: 'Next 7 Days'
+    }
+  };
+  return translations[lang.value];
+});
+
+const getHeaderTitle = computed(() => {
+  if (activeView.value === 'calendar') {
+    return lang.value === 'zh' 
+      ? `${viewDate.value.getFullYear()}年 ${viewDate.value.getMonth() + 1}月`
+      : `${viewDate.value.toLocaleString('en-US', { month: 'long' })} ${viewDate.value.getFullYear()}`;
+  }
+  
+  if (selectedFilter.value.type === 'all') return t.value.allTasksTitle;
+  if (selectedFilter.value.type === 'time') {
+    if (selectedFilter.value.value === 'today') return t.value.todayTitle;
+    if (selectedFilter.value.value === 'tomorrow') return t.value.tomorrowTitle;
+    if (selectedFilter.value.value === 'week') return t.value.weekTitle;
+  }
+  if (selectedFilter.value.type === 'project') {
+    const name = selectedFilter.value.value.split(' / ').pop();
+    return `${name} ${t.value.projectTitle}`;
+  }
+  return '';
+});
+
+const toggleLang = () => {
+  lang.value = lang.value === 'zh' ? 'en' : 'zh';
+  localStorage.setItem('gtd-lang', lang.value);
+};
 
 const selectionStart = ref(null);
 const selectionEnd = ref(null);
@@ -177,11 +275,33 @@ const allTags = computed(() => {
 
 const filteredTasks = computed(() => {
   const query = searchQuery.value.toLowerCase();
-  const filter = selectedFilter.value.value;
+  const filter = selectedFilter.value;
   const tag = selectedTag.value;
+  const today = getToday();
   
+  const tomorrowDate = new Date();
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrow = formatDate(tomorrowDate);
+  
+  const nextWeekDate = new Date();
+  nextWeekDate.setDate(nextWeekDate.getDate() + 7);
+  const nextWeek = formatDate(nextWeekDate);
+
   return allTasks.value.filter(t => {
-    const projectMatch = filter === 'ALL' || t.projectPath.startsWith(filter);
+    // Project/Time Filter
+    let matchFilter = true;
+    if (filter.type === 'project') {
+      matchFilter = t.projectPath.startsWith(filter.value);
+    } else if (filter.type === 'time') {
+      if (filter.value === 'today') {
+        matchFilter = t.date && isDateInRange(today, t.date);
+      } else if (filter.value === 'tomorrow') {
+        matchFilter = t.date && isDateInRange(tomorrow, t.date);
+      } else if (filter.value === 'week') {
+        matchFilter = t.date && t.date.split(' ')[0] >= today && t.date.split(' ')[0] <= nextWeek;
+      }
+    }
+
     const tagMatch = !tag || t.tags.includes(tag);
     const searchMatch = !query || 
       t.content.toLowerCase().includes(query) ||
@@ -189,7 +309,7 @@ const filteredTasks = computed(() => {
       t.tags.some(tg => tg.toLowerCase().includes(query));
     const completedMatch = !hideCompleted.value || !t.completed;
     
-    return projectMatch && tagMatch && searchMatch && completedMatch;
+    return matchFilter && tagMatch && searchMatch && completedMatch;
   });
 });
 
@@ -633,6 +753,13 @@ watch([activeView, calendarMode], async () => {
 });
 
 onMounted(async () => {
+    // Global click listener to close dropdown
+    window.addEventListener('click', (e) => {
+      if (!e.target.closest('.relative')) {
+        isLanguageDropdownOpen.value = false;
+      }
+    });
+
     try {
         const defaultHandle = await getFileHandle();
         if (defaultHandle) {
@@ -688,11 +815,27 @@ const onDrop = (e, dayDate) => {
     <!-- Sidebar -->
     <div :class="[sidebarOpen ? 'w-80' : 'w-0', 'bg-white border-r border-slate-200 transition-all duration-300 flex flex-col overflow-hidden z-20']">
       <div class="p-6 flex items-center justify-between">
-         <div class="flex items-center gap-3 font-black text-xl text-blue-600">
-           <CheckCircle2 class="w-8 h-8" /> <span>GTD Flow</span>
+         <div class="relative">
+           <div @click="isLanguageDropdownOpen = !isLanguageDropdownOpen" class="flex items-center gap-3 font-black text-xl text-blue-600 cursor-pointer hover:bg-slate-50 p-2 -m-2 rounded-xl transition-all">
+             <CheckCircle2 class="w-8 h-8" /> <span>GTD Flow</span>
+             <ChevronDown :size="16" class="text-slate-400" />
+           </div>
+           
+           <!-- Logo Dropdown Menu -->
+           <div v-if="isLanguageDropdownOpen" class="absolute left-0 mt-4 w-48 bg-white border border-slate-100 rounded-2xl shadow-xl z-50 py-2 animate-in fade-in zoom-in-95 duration-200">
+             <button @click="toggleLang(); isLanguageDropdownOpen = false" class="w-full text-left px-4 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-3">
+               <Languages :size="18" class="text-slate-400"/>
+               {{ lang === 'zh' ? 'English' : '中文' }}
+             </button>
+             <button @click="isSettingsOpen = true; isLanguageDropdownOpen = false" class="w-full text-left px-4 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-3">
+               <SettingsIcon :size="18" class="text-slate-400"/>
+               {{ t.settings }}
+             </button>
+           </div>
          </div>
+         
          <div class="px-2 py-1 rounded text-[10px] font-bold border" :class="isSaving ? 'text-amber-500 bg-amber-50 border-amber-100' : 'text-emerald-500 bg-emerald-50 border-emerald-100'">
-            {{ isSaving ? 'SAVING...' : 'V0.0.3.3' }}
+            {{ isSaving ? t.saving : 'V0.0.4' }}
          </div>
       </div>
       
@@ -704,77 +847,58 @@ const onDrop = (e, dayDate) => {
             <input 
               v-model="searchQuery"
               class="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
-              placeholder="搜索任务、项目或标签..."
+              :placeholder="t.searchPlaceholder"
             />
-            <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+            <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-50">
               <X :size="12"/>
             </button>
           </div>
         </div>
 
-        <!-- File Management Section -->
-        <nav class="space-y-1">
-           <div class="px-4 text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">文件管理</div>
-           
-           <div v-if="pendingDefaultHandle" @click="loadPendingDefault" 
-                class="mx-4 mb-2 p-3 bg-amber-50 text-amber-600 rounded-2xl text-xs font-bold cursor-pointer hover:bg-amber-100 transition-colors border border-amber-100 flex items-center gap-2">
-             <RefreshCw :size="16" />
-             <span>重连默认文件...</span>
-           </div>
-
-           <div v-if="fileChangedOnDisk" class="mx-4 mb-2 p-3 bg-red-50 text-red-600 rounded-2xl text-xs font-bold border border-red-100">
-             <div class="flex items-center gap-2 mb-2">
-                <RefreshCw :size="16" class="animate-spin"/>
-                <span>文件外部已更改</span>
-             </div>
-             <button @click="reloadFileFromDisk" class="w-full py-1.5 bg-red-100 hover:bg-red-200 rounded-lg transition-colors text-red-700">重新加载</button>
-           </div>
-           
-           <div class="flex items-center gap-2 px-4 py-1">
-               <button @click="handleOpenFile" 
-                       class="flex-1 p-2.5 flex items-center justify-center rounded-xl bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-blue-600 transition-all border border-slate-100 shadow-sm active:scale-95" 
-                       title="打开本地文件">
-                   <FolderOpen :size="18" />
-               </button>
-
-               <button @click="handleSaveFile" 
-                       class="flex-1 p-2.5 flex items-center justify-center rounded-xl bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-emerald-600 transition-all border border-slate-100 shadow-sm active:scale-95"
-                       :title="currentFileHandle ? '保存更改' : '另存为...'">
-                   <Save :size="18" />
-               </button>
-
-               <button v-if="currentFileHandle" 
-                       @click="toggleDefaultFile" 
-                       class="flex-1 p-2.5 flex items-center justify-center rounded-xl border shadow-sm transition-all active:scale-95"
-                       :class="isDefaultFile ? 'bg-amber-50 border-amber-100 text-amber-500' : 'bg-slate-50 border-slate-100 text-slate-400 hover:bg-slate-100 hover:text-amber-500'"
-                       :title="isDefaultFile ? '已设为默认文件' : '设为默认文件'">
-                   <Pin :size="18" :class="isDefaultFile ? 'fill-current' : ''"/>
-               </button>
-           </div>
-        </nav>
-
         <nav class="space-y-0.5">
-          <div class="px-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">主视图</div>
+          <div class="px-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">{{ t.allTasks }}</div>
           
           <div @click="selectedFilter = {type: 'all', value: 'ALL'}; activeView = 'view'" 
                class="flex items-center justify-between px-4 py-2 cursor-pointer rounded-xl transition-all group"
-               :class="activeView === 'view' && selectedFilter.value === 'ALL' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
+               :class="selectedFilter.type === 'all' && activeView === 'view' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
             <div class="flex items-center gap-3">
-              <ListTodo :size="20" :class="activeView === 'view' && selectedFilter.value === 'ALL' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
-              <span class="text-sm font-bold">所有任务</span>
+              <ListTodo :size="20" :class="selectedFilter.type === 'all' && activeView === 'view' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+              <span class="text-sm font-bold">{{ t.allTasks }}</span>
             </div>
             <button @click.stop="hideCompleted = !hideCompleted" 
                     class="p-1.5 rounded-lg transition-colors hover:bg-white/20"
                     :title="hideCompleted ? '显示已完成' : '隐藏已完成'">
-              <component :is="hideCompleted ? EyeOff : Eye" :size="16" :class="activeView === 'view' && selectedFilter.value === 'ALL' ? 'text-blue-200' : 'text-slate-300'"/>
+              <component :is="hideCompleted ? EyeOff : Eye" :size="16" :class="selectedFilter.type === 'all' && activeView === 'view' ? 'text-blue-200' : 'text-slate-300'"/>
             </button>
+          </div>
+
+          <!-- Time Filters -->
+          <div @click="selectedFilter = {type: 'time', value: 'today'}; activeView = 'view'" 
+               class="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-xl transition-all group"
+               :class="selectedFilter.type === 'time' && selectedFilter.value === 'today' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
+            <Sun :size="20" :class="selectedFilter.type === 'time' && selectedFilter.value === 'today' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+            <span class="text-sm font-bold">{{ t.today }}</span>
+          </div>
+
+          <div @click="selectedFilter = {type: 'time', value: 'tomorrow'}; activeView = 'view'" 
+               class="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-xl transition-all group"
+               :class="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
+            <CalendarIcon :size="20" :class="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+            <span class="text-sm font-bold">{{ t.tomorrow }}</span>
+          </div>
+
+          <div @click="selectedFilter = {type: 'time', value: 'week'}; activeView = 'view'" 
+               class="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-xl transition-all group"
+               :class="selectedFilter.type === 'time' && selectedFilter.value === 'week' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
+            <CalendarDays :size="20" :class="selectedFilter.type === 'time' && selectedFilter.value === 'week' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+            <span class="text-sm font-bold">{{ t.next7Days }}</span>
           </div>
           
           <div @click="activeView = 'calendar'" 
                class="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-xl transition-all group"
                :class="activeView === 'calendar' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
             <CalendarIcon :size="20" :class="activeView === 'calendar' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
-            <span class="text-sm font-bold">日历日程</span>
+            <span class="text-sm font-bold">{{ t.calendar }}</span>
           </div>
         </nav>
 
@@ -849,6 +973,80 @@ const onDrop = (e, dayDate) => {
       </div>
     </div>
 
+    <!-- Settings Modal -->
+    <div v-if="isSettingsOpen" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+      <div class="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-100 overflow-hidden">
+        <div class="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+          <h3 class="font-black text-slate-800 flex items-center gap-2">
+            <SettingsIcon :size="20" class="text-blue-600"/>
+            {{ t.settings }}
+          </h3>
+          <button @click="isSettingsOpen = false" class="p-2 hover:bg-slate-100 rounded-full text-slate-400 transition-all"><X :size="20"/></button>
+        </div>
+        
+        <div class="p-8 space-y-8">
+          <!-- File Management in Settings -->
+          <section class="space-y-4">
+            <h4 class="text-[10px] font-black text-slate-400 uppercase tracking-widest">{{ t.fileManagement }}</h4>
+            
+            <div v-if="pendingDefaultHandle" @click="loadPendingDefault" 
+                 class="p-4 bg-amber-50 text-amber-600 rounded-2xl text-sm font-bold cursor-pointer hover:bg-amber-100 transition-colors border border-amber-100 flex items-center gap-3">
+              <RefreshCw :size="18" />
+              <span>重连默认文件...</span>
+            </div>
+
+            <div v-if="fileChangedOnDisk" class="p-4 bg-red-50 text-red-600 rounded-2xl text-sm font-bold border border-red-100 space-y-3">
+              <div class="flex items-center gap-3">
+                 <RefreshCw :size="18" class="animate-spin"/>
+                 <span>文件外部已更改</span>
+              </div>
+              <button @click="reloadFileFromDisk" class="w-full py-2 bg-red-100 hover:bg-red-200 rounded-xl transition-colors text-red-700">重新加载</button>
+            </div>
+
+            <div class="grid grid-cols-1 gap-3">
+              <button @click="handleOpenFile" class="w-full p-4 flex items-center gap-4 rounded-2xl bg-slate-50 text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-all border border-slate-100 group">
+                <div class="p-2 rounded-xl bg-white shadow-sm group-hover:bg-blue-100 transition-colors">
+                  <FolderOpen :size="20" />
+                </div>
+                <span class="font-bold text-sm">{{ t.openFile }}</span>
+              </button>
+
+              <button @click="handleSaveFile" class="w-full p-4 flex items-center gap-4 rounded-2xl bg-slate-50 text-slate-700 hover:bg-emerald-50 hover:text-emerald-600 transition-all border border-slate-100 group">
+                <div class="p-2 rounded-xl bg-white shadow-sm group-hover:bg-emerald-100 transition-colors">
+                  <Save :size="20" />
+                </div>
+                <span class="font-bold text-sm">{{ currentFileHandle ? t.saveFile : t.saveAs }}</span>
+              </button>
+
+              <button v-if="currentFileHandle" @click="toggleDefaultFile" class="w-full p-4 flex items-center gap-4 rounded-2xl bg-slate-50 text-slate-700 hover:bg-amber-50 hover:text-amber-600 transition-all border border-slate-100 group">
+                <div class="p-2 rounded-xl bg-white shadow-sm group-hover:bg-amber-100 transition-colors" :class="isDefaultFile ? 'text-amber-500' : ''">
+                  <Pin :size="20" :class="isDefaultFile ? 'fill-current' : ''"/>
+                </div>
+                <span class="font-bold text-sm">{{ isDefaultFile ? t.unsetDefault : t.setDefault }}</span>
+              </button>
+            </div>
+          </section>
+
+          <!-- Language in Settings -->
+          <section class="space-y-4">
+            <h4 class="text-[10px] font-black text-slate-400 uppercase tracking-widest">{{ t.language }}</h4>
+            <div class="flex p-1 bg-slate-100 rounded-2xl">
+              <button @click="lang = 'zh'; localStorage.setItem('gtd-lang', 'zh')" 
+                      class="flex-1 py-3 text-sm font-bold rounded-xl transition-all"
+                      :class="lang === 'zh' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'">
+                中文
+              </button>
+              <button @click="lang = 'en'; localStorage.setItem('gtd-lang', 'en')" 
+                      class="flex-1 py-3 text-sm font-bold rounded-xl transition-all"
+                      :class="lang === 'en' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'">
+                English
+              </button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
     <!-- Main Content -->
     <div class="flex-1 flex flex-col min-w-0 bg-slate-50 relative">
       <!-- Mobile Overlay -->
@@ -858,10 +1056,7 @@ const onDrop = (e, dayDate) => {
         <div class="flex items-center gap-4">
           <button @click="sidebarOpen = !sidebarOpen" class="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-400"><Menu :size="20"/></button>
           <h2 class="font-bold text-lg text-slate-700 truncate max-w-[150px] sm:max-w-[300px]">
-            {{ activeView === 'calendar' 
-              ? `${viewDate.getFullYear()}年 ${viewDate.getMonth() + 1}月` 
-              : (selectedFilter.value === 'ALL' ? '所有任务清单' : `${selectedFilter.value.split(' / ').pop()} 清单`)
-            }}
+            {{ getHeaderTitle }}
           </h2>
         </div>
         
@@ -1021,23 +1216,26 @@ const onDrop = (e, dayDate) => {
         <div v-if="activeView === 'view'" class="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4 max-w-3xl mx-auto w-full">
             <div class="flex items-center gap-3 mb-6 sm:mb-8">
                <div class="p-3 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-100">
-                  <ListTodo v-if="selectedFilter.value === 'ALL'" :size="24"/>
+                  <ListTodo v-if="selectedFilter.type === 'all'" :size="24"/>
+                  <Sun v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'today'" :size="24"/>
+                  <CalendarIcon v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow'" :size="24"/>
+                  <CalendarDays v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'week'" :size="24"/>
                   <component v-else :is="getGTDIcon(selectedFilter.value)" :size="24"/>
                </div>
                <div>
                   <h1 class="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">
-                    {{ selectedFilter.value === 'ALL' ? '所有待办' : selectedFilter.value.split(' / ').pop() }}
+                    {{ getHeaderTitle }}
                   </h1>
                   <p class="text-xs text-slate-400 font-medium">
                     <template v-if="selectedTag">
-                      标签 "#{{ selectedTag }}" 下有 {{ filteredTasks.length }} 个任务
+                      {{ t.tags }} "#{{ selectedTag }}" : {{ filteredTasks.length }}
                     </template>
-                    <template v-else-if="selectedFilter.value === 'ALL'">
-                      共 {{ filteredTasks.length }} 个任务
+                    <template v-else-if="selectedFilter.type === 'all' || selectedFilter.type === 'time'">
+                      {{ filteredTasks.length }} {{ t.allTasks }}
                     </template>
                     <template v-else>
-                      待办 {{ allTasks.filter(t => t.projectPath.startsWith(selectedFilter.value) && !t.completed).length }} / 
-                      共 {{ allTasks.filter(t => t.projectPath.startsWith(selectedFilter.value)).length }} 个任务
+                      {{ t.todayTitle }}: {{ allTasks.filter(t => t.projectPath.startsWith(selectedFilter.value) && !t.completed).length }} / 
+                      {{ t.allTasks }}: {{ allTasks.filter(t => t.projectPath.startsWith(selectedFilter.value)).length }}
                     </template>
                   </p>
                </div>

@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.4] - 2026-01-31
+
+### 🚀 UX Refinement & Internationalization
+This release introduces multi-language support and a more focused UI by moving advanced settings to a dedicated modal.
+
+### ✨ Features
+- **Internationalization (i18n)**: 
+  - Added support for **English** and **Chinese** languages.
+  - New language switch dropdown in the top-left logo area.
+- **Improved Workspace Views**:
+  - Added **Today**, **Tomorrow**, and **Next 7 Days** smart views to the sidebar.
+  - Dynamically updates task counts and header titles based on the selected time period.
+- **Settings Modal**:
+  - Consolidated file management actions (Open, Save, Default) into a centralized Settings dialog.
+  - Added language preferences selection within the modal.
+- **UI & UX Refinement**:
+  - Clickable logo area with dropdown menu for quick access to settings and language.
+  - Improved header titles that clearly reflect the active filter or project.
+  - Enhanced search feedback and real-time task statistics.
+
 ## [0.0.3.3] - 2026-01-31
 
 ### 🚀 Feature Enhancements & UI Optimization
