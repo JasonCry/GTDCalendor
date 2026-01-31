@@ -1,10 +1,12 @@
 <script setup>
-import { ref, computed, watch, onMounted, nextTick, shallowRef, onUnmounted } from 'vue';
 import { 
   CheckCircle2, Layout, FileText, Plus, Menu, Inbox, Hash, Zap, Coffee, Hourglass, 
   ListTodo, Info, ChevronLeft, ChevronRight, ChevronDown, CalendarDays, Clock, Trash2, X, Calendar,
-  FolderOpen, Save, RefreshCw, Pin, Search, Eye, EyeOff, Tag, Languages, Settings, Sun, Moon
+  FolderOpen, Save, RefreshCw, Pin, Search, Eye, EyeOff, Tag, Languages, Settings, Sun, Moon, BarChart2,
+  CornerDownRight, Repeat
 } from 'lucide-vue-next';
+import { ref, computed, watch, onMounted, nextTick, shallowRef, onUnmounted } from 'vue';
+import { addDays, addWeeks, addMonths, parseISO, format as formatDt } from 'date-fns';
 import TaskCard from './components/TaskCard.vue';
 import ProjectItem from './components/ProjectItem.vue';
 import { saveFileHandle, getFileHandle, removeFileHandle } from './utils/fileStorage';
@@ -149,7 +151,15 @@ const t = computed(() => {
       waitingFor: '等待确认',
       somedayMaybe: '将来/也许',
       darkMode: '深色模式',
-      lightMode: '浅色模式'
+      lightMode: '浅色模式',
+      review: '回顾统计',
+      achievementCenter: '成就中心',
+      totalCompleted: '累计完成',
+      completionRate: '完成率',
+      activeDays: '活跃天数',
+      weeklyTrend: '最近 7 天完成趋势',
+      projectDistribution: '项目完成分布',
+      noData: '暂无统计数据，开始执行任务吧！'
     },
     en: {
       allTasks: 'All Tasks',
@@ -189,7 +199,15 @@ const t = computed(() => {
       waitingFor: 'Waiting For',
       somedayMaybe: 'Someday/Maybe',
       darkMode: 'Dark Mode',
-      lightMode: 'Light Mode'
+      lightMode: 'Light Mode',
+      review: 'Review & Stats',
+      achievementCenter: 'Achievement Center',
+      totalCompleted: 'Completed',
+      completionRate: 'Success Rate',
+      activeDays: 'Active Days',
+      weeklyTrend: 'Weekly Completion Trend',
+      projectDistribution: 'Project Distribution',
+      noData: 'No stats yet. Start getting things done!'
     }
   };
   return translations[lang.value];
@@ -209,6 +227,8 @@ const getHeaderTitle = computed(() => {
       ? `${viewDate.value.getFullYear()}年 ${viewDate.value.getMonth() + 1}月`
       : `${viewDate.value.toLocaleString('en-US', { month: 'long' })} ${viewDate.value.getFullYear()}`;
   }
+  
+  if (activeView.value === 'stats') return t.value.achievementCenter;
   
   const filter = selectedFilter.value;
   if (!filter) return '';
@@ -258,6 +278,11 @@ const parsedData = computed(() => {
 
   lines.forEach((line, index) => {
     const trimmed = line.trim();
+    if (trimmed === '') {
+      currentTask = null;
+      return;
+    }
+
     if (trimmed.startsWith('#')) {
       currentTask = null;
       const level = (trimmed.match(/^#+/) || ['#'])[0].length;
@@ -272,8 +297,23 @@ const parsedData = computed(() => {
       node.path = parent.path ? `${parent.path} / ${nodeName}` : nodeName;
       parent.children.push(node);
       stack.push(node);
+    } else if (currentTask && (line.startsWith('  ') || line.startsWith('\t'))) {
+      // Indented line: could be a subtask or a note
+      if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]')) {
+        currentTask.subtasks.push({
+          content: trimmed.replace(/^- \[[ x]\]\s*/, '').trim(),
+          completed: trimmed.startsWith('- [x]'),
+          lineIndex: index
+        });
+      } else {
+        currentTask.notes.push(trimmed);
+      }
+      currentTask.lineCount++;
     } else if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]')) {
+      // Top-level task (no leading indentation)
       const dateMatch = trimmed.match(/@(\d{4}-\d{2}-\d{2}(~\d{4}-\d{2}-\d{2})?(\s\d{2}:\d{2}(~\d{2}:\d{2})?)?)/);
+      const doneMatch = trimmed.match(/@done\((\d{4}-\d{2}-\d{2})\)/);
+      const everyMatch = trimmed.match(/@every\((day|week|month)\)/);
       const priorityMatch = trimmed.match(/!([1-3])/);
       const tagsMatch = trimmed.match(/#([^\s#]+)/g);
       
@@ -284,24 +324,24 @@ const parsedData = computed(() => {
         content: trimmed
           .replace(/^- \[[ x]\]\s*/, '')
           .replace(/@\d{4}-\d{2}-\d{2}(~\d{4}-\d{2}-\d{2})?(\s\d{2}:\d{2}(~\d{2}:\d{2})?)?/, '')
+          .replace(/@done\(\d{4}-\d{2}-\d{2}\)/, '')
+          .replace(/@every\((day|week|month)\)/, '')
           .replace(/![1-3]/, '')
           .replace(/#[^\s#]+/g, '')
           .trim(),
         completed: trimmed.startsWith('- [x]'),
         date: dateMatch ? dateMatch[1] : null,
+        doneDate: doneMatch ? doneMatch[1] : null,
+        recurrence: everyMatch ? everyMatch[1] : null,
         priority: priorityMatch ? parseInt(priorityMatch[1]) : null,
         tags: tagsMatch ? tagsMatch.map(t => t.substring(1)) : [],
         projectPath: stack[stack.length - 1].path,
-        notes: []
+        notes: [],
+        subtasks: []
       };
       stack[stack.length - 1].tasks.push(task);
       all.push(task);
       currentTask = task;
-    } else if (currentTask && (line.startsWith('  ') || line.startsWith('\t'))) {
-      currentTask.notes.push(trimmed);
-      currentTask.lineCount++;
-    } else if (trimmed === '' && currentTask) {
-      currentTask = null;
     } else {
       currentTask = null;
     }
@@ -422,6 +462,41 @@ const calendarDays = computed(() => {
   return days;
 });
 
+const statistics = computed(() => {
+  const tasks = allTasks.value || [];
+  const completedTasks = tasks.filter(t => t.completed);
+  
+  // Weekly Trend (last 7 days)
+  const last7Days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateStr = formatDate(d);
+    const count = completedTasks.filter(t => t.doneDate === dateStr).length;
+    last7Days.push({ label: dateStr.split('-').slice(1).join('/'), count, fullDate: dateStr });
+  }
+
+  // Project Distribution
+  const projectStats = projects.value.map(p => {
+    const projectTasks = tasks.filter(t => t.projectPath.startsWith(p.path));
+    const completed = projectTasks.filter(t => t.completed).length;
+    return {
+      name: p.displayName || p.name,
+      total: projectTasks.length,
+      completed,
+      percent: projectTasks.length ? Math.round((completed / projectTasks.length) * 100) : 0
+    };
+  }).filter(p => p.total > 0).sort((a, b) => b.completed - a.completed);
+
+  return {
+    totalCompleted: completedTasks.length,
+    completionRate: tasks.length ? Math.round((completedTasks.length / tasks.length) * 100) : 0,
+    activeDays: new Set(completedTasks.map(t => t.doneDate).filter(d => d)).size,
+    weeklyTrend: last7Days,
+    projectDistribution: projectStats.slice(0, 10) // Top 10 active projects
+  };
+});
+
 const hours = Array.from({ length: 24 }, (_, i) => i);
 const timeSlots = Array.from({ length: 24 * 4 }, (_, i) => i * 15);
 
@@ -431,10 +506,56 @@ const handleToggle = (idx, status) => {
   const line = lines[idx];
   if (!line) return;
   
+  const tasks = allTasks.value || [];
+  const task = tasks.find(t => t.lineIndex === idx);
+
   if (status) {
-    lines[idx] = line.replace(/^- \[x\]/, '- [ ]');
+    // Unchecking: Remove [x] and ALL existing @done tags
+    lines[idx] = line
+      .replace(/^- \[x\]/, '- [ ]')
+      .replace(/\s*@done\(\d{4}-\d{2}-\d{2}\)/g, '');
   } else {
-    lines[idx] = line.replace(/^- \[ \]/, '- [x]');
+    // Checking: Remove any stale @done tags first, then add [x] and ONE fresh @done tag
+    const cleanLine = line.replace(/\s*@done\(\d{4}-\d{2}-\d{2}\)/g, '');
+    const doneTag = ` @done(${getToday()})`;
+    lines[idx] = cleanLine.replace(/^- \[ \]/, '- [x]') + doneTag;
+
+    // Handle Recurring Task logic
+    if (task && task.recurrence) {
+      let nextDate = new Date();
+      // If task has a base date, use it as start point, otherwise use today
+      const baseDate = task.date ? parseISO(task.date.split(' ')[0]) : new Date();
+      
+      if (task.recurrence === 'day') nextDate = addDays(baseDate, 1);
+      else if (task.recurrence === 'week') nextDate = addWeeks(baseDate, 1);
+      else if (task.recurrence === 'month') nextDate = addMonths(baseDate, 1);
+
+      const nextDateStr = formatDt(nextDate, 'yyyy-MM-dd');
+      const timePart = task.date && task.date.includes(' ') ? ' ' + task.date.split(' ')[1] : '';
+      
+      // Create new task line
+      let newTaskLine = `- [ ] ${task.content}`;
+      if (task.priority) newTaskLine += ` !${task.priority}`;
+      newTaskLine += ` @${nextDateStr}${timePart}`;
+      newTaskLine += ` @every(${task.recurrence})`;
+      if (task.tags && task.tags.length) newTaskLine += ` ${task.tags.map(tg => '#' + tg).join(' ')}`;
+
+      // Insert new task after the current completed one (including its notes/subtasks)
+      lines.splice(idx + (task.lineCount || 1), 0, newTaskLine);
+    }
+  }
+  markdown.value = lines.join('\n');
+};
+
+const handleToggleSubtask = (subtaskLineIndex, status) => {
+  const lines = markdown.value.split('\n');
+  const line = lines[subtaskLineIndex];
+  if (!line) return;
+
+  if (status) {
+    lines[subtaskLineIndex] = line.replace('- [x]', '- [ ]');
+  } else {
+    lines[subtaskLineIndex] = line.replace('- [ ]', '- [x]');
   }
   markdown.value = lines.join('\n');
 };
@@ -449,10 +570,12 @@ const handleUpdateTask = (lineIndex, updates) => {
   const newDate = updates.date !== undefined ? updates.date : task.date;
   const newPriority = updates.priority !== undefined ? updates.priority : task.priority;
   const newTags = updates.tags !== undefined ? updates.tags : task.tags;
+  const newRecurrence = updates.recurrence !== undefined ? updates.recurrence : task.recurrence;
 
   let newLine = `- [${newCompleted ? 'x' : ' '}] ${newContent}`;
   if (newPriority) newLine += ` !${newPriority}`;
   if (newDate) newLine += ` @${newDate}`;
+  if (newRecurrence) newLine += ` @every(${newRecurrence})`;
   if (newTags && newTags.length) newLine += ` ${newTags.map(t => '#' + t).join(' ')}`;
   
   lines[lineIndex] = newLine;
@@ -586,7 +709,18 @@ const addTask = (dateInfo = null) => {
   let text = newTaskInput.value.trim();
   let date = dateInfo;
 
-  // Basic NLP for dates if not provided by calendar
+  // 1. Inherit date from smart time filters if no dateInfo provided
+  if (!date && selectedFilter.value.type === 'time') {
+    if (selectedFilter.value.value === 'today') {
+      date = getToday();
+    } else if (selectedFilter.value.value === 'tomorrow') {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      date = formatDate(tomorrow);
+    }
+  }
+
+  // 2. Basic NLP for dates (fallback)
   if (!date) {
     if (text.includes('今天')) {
       date = getToday();
@@ -603,16 +737,22 @@ const addTask = (dateInfo = null) => {
   if (date) content += ` @${date}`;
   
   let insertIdx = -1;
-  if (selectedFilter.value.value !== 'ALL') {
-      const projectName = selectedFilter.value.value.split(' / ').pop();
-      insertIdx = lines.findIndex(l => l.startsWith('#') && l.includes(projectName)) + 1;
+  // 3. Determine insertion point based on project filter or default to Inbox
+  if (selectedFilter.value.type === 'project') {
+      const projectName = selectedFilter.value.value.split(' / ').pop().trim();
+      insertIdx = lines.findIndex(l => l.startsWith('#') && l.replace(/^#+\s*/, '').trim() === projectName) + 1;
   } else {
-      insertIdx = lines.findIndex(l => l.includes('收件箱')) + 1;
+      // Look for Inbox specifically
+      insertIdx = lines.findIndex(l => l.includes('收件箱') || l.toLowerCase().includes('inbox')) + 1;
   }
 
+  // Fallback to first heading or end of file
   if (insertIdx <= 0) insertIdx = lines.findIndex(l => l.startsWith('#')) + 1;
-  if (insertIdx <= 0) { lines.push('# 📥 收件箱', content); } 
-  else { lines.splice(insertIdx, 0, content); } 
+  if (insertIdx <= 0) { 
+    lines.push(`# 📥 ${t.value.inbox}`, content); 
+  } else { 
+    lines.splice(insertIdx, 0, content); 
+  } 
   
   markdown.value = lines.join('\n');
   newTaskInput.value = '';
@@ -891,6 +1031,91 @@ const onSidebarDrop = (e, targetPath) => {
   }
 };
 
+const dropTargetIdx = ref(null);
+const activeSubtaskDropIdx = ref(null);
+
+const onTaskDrop = (e, targetLineIdx) => {
+  dropTargetIdx.value = null;
+  try {
+    const taskData = JSON.parse(e.dataTransfer.getData('task'));
+    const sourceIdx = parseInt(taskData.lineIndex);
+    const targetIdx = parseInt(targetLineIdx);
+    
+    if (isNaN(sourceIdx) || isNaN(targetIdx) || sourceIdx === targetIdx) return;
+
+    const lines = markdown.value.split('\n');
+    const sourceTask = allTasks.value.find(t => t.lineIndex === sourceIdx);
+    if (!sourceTask) return;
+
+    const lineCount = sourceTask.lineCount || 1;
+    const taskLines = lines.splice(sourceIdx, lineCount);
+    
+    // Calculate final insertion point
+    let finalTargetIdx = targetIdx;
+    if (sourceIdx < targetIdx) {
+      finalTargetIdx = targetIdx - lineCount;
+    }
+
+    lines.splice(finalTargetIdx, 0, ...taskLines);
+    markdown.value = lines.join('\n');
+  } catch (err) {
+    console.error('Task reorder error:', err);
+  }
+};
+
+const onSubtaskDropOnZone = (e, targetLineIdx) => {
+  activeSubtaskDropIdx.value = null;
+  try {
+    const taskData = JSON.parse(e.dataTransfer.getData('task'));
+    handleMakeSubtask(taskData.lineIndex, targetLineIdx);
+  } catch (err) {
+    console.error('Subtask drop on zone error:', err);
+  }
+};
+
+const handleMakeSubtask = (sourceLineIndex, targetLineIndex) => {
+  const sourceIdx = parseInt(sourceLineIndex);
+  const targetIdx = parseInt(targetLineIndex);
+  if (isNaN(sourceIdx) || isNaN(targetIdx) || sourceIdx === targetIdx) return;
+
+  const lines = markdown.value.split('\n');
+  // Find current state of tasks to get accurate lineCount
+  const sourceTask = parsedData.value.allTasks.find(t => t.lineIndex === sourceIdx);
+  if (!sourceTask) return;
+
+  // 1. Extract source task block
+  const taskLines = lines.splice(sourceIdx, sourceTask.lineCount || 1);
+  
+  // 2. Adjust target index after removal
+  let adjustedTargetIdx = targetIdx;
+  if (sourceIdx < targetIdx) {
+    adjustedTargetIdx -= (sourceTask.lineCount || 1);
+  }
+
+  // 3. Find the exact insertion point (after the target task and all its current sub-content)
+  let insertionPoint = adjustedTargetIdx + 1;
+  while (insertionPoint < lines.length) {
+    const line = lines[insertionPoint];
+    // Stop if we hit a heading or a top-level task (starts with - [ but NO leading whitespace)
+    if (line.trim().startsWith('#')) break;
+    if (line.startsWith('- [') && !line.startsWith('  ') && !line.startsWith('\t')) break;
+    
+    // Continue if it's a subtask or note (starts with whitespace)
+    if (line.startsWith('  ') || line.startsWith('\t') || line.trim() === '') {
+      insertionPoint++;
+    } else {
+      break;
+    }
+  }
+
+  // 4. Indent and insert
+  // Ensure we add exactly 2 spaces of indentation
+  const indentedLines = taskLines.map(l => '  ' + l.trimStart());
+  lines.splice(insertionPoint, 0, ...indentedLines);
+  
+  markdown.value = lines.join('\n');
+};
+
 const onDrop = (e, dayDate) => {
   const taskData = JSON.parse(e.dataTransfer.getData('task'));
   const rect = e.currentTarget.getBoundingClientRect();
@@ -932,7 +1157,7 @@ const onDrop = (e, dayDate) => {
          </div>
          
          <div class="px-2 py-1 rounded text-[10px] font-bold border" :class="isSaving ? 'text-amber-500 bg-amber-50 border-amber-100' : 'text-emerald-500 bg-emerald-50 border-emerald-100'">
-            {{ isSaving ? t.saving : 'V0.0.5' }}
+            {{ isSaving ? t.saving : 'V0.0.6' }}
          </div>
       </div>
       
@@ -996,6 +1221,13 @@ const onDrop = (e, dayDate) => {
                :class="activeView === 'calendar' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 dark:shadow-blue-900/20' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'">
             <Calendar :size="20" :class="activeView === 'calendar' ? 'text-white' : 'text-slate-400 dark:text-slate-500 group-hover:text-blue-500'"/>
             <span class="text-sm font-bold">{{ t.calendar }}</span>
+          </div>
+
+          <div @click="activeView = 'stats'" 
+               class="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-xl transition-all group"
+               :class="activeView === 'stats' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 dark:shadow-blue-900/20' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'">
+            <BarChart2 :size="20" :class="activeView === 'stats' ? 'text-white' : 'text-slate-400 dark:text-slate-500 group-hover:text-blue-500'"/>
+            <span class="text-sm font-bold">{{ t.review }}</span>
           </div>
         </nav>
 
@@ -1310,6 +1542,70 @@ const onDrop = (e, dayDate) => {
           </div>
         </div>
 
+        <!-- Achievement Center (Review) -->
+        <div v-if="activeView === 'stats'" class="flex-1 overflow-y-auto p-4 sm:p-8 space-y-8 max-w-4xl mx-auto w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                <!-- Summary Cards -->
+                <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm">
+                    <div class="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">{{ t.totalCompleted }}</div>
+                    <div class="text-4xl font-black text-blue-600 dark:text-blue-400">{{ statistics.totalCompleted }}</div>
+                </div>
+                <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm">
+                    <div class="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">{{ t.completionRate }}</div>
+                    <div class="text-4xl font-black text-emerald-500 dark:text-emerald-400">{{ statistics.completionRate }}%</div>
+                </div>
+                <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm">
+                    <div class="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">{{ t.activeDays }}</div>
+                    <div class="text-4xl font-black text-amber-500 dark:text-amber-400">{{ statistics.activeDays }}</div>
+                </div>
+            </div>
+
+            <!-- Weekly Trend Bar Chart (CSS-based) -->
+            <div class="bg-white dark:bg-slate-800 p-8 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm">
+                <h3 class="font-black text-slate-800 dark:text-slate-100 mb-8 flex items-center gap-2">
+                    <Zap :size="18" class="text-blue-500"/> {{ t.weeklyTrend }}
+                </h3>
+                <div class="flex items-end justify-between h-48 gap-2 sm:gap-4 px-2">
+                    <div v-for="day in statistics.weeklyTrend" :key="day.fullDate" class="flex-1 flex flex-col items-center group relative">
+                        <!-- Tooltip -->
+                        <div class="absolute -top-10 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                            {{ day.count }} 任务
+                        </div>
+                        <!-- Bar -->
+                        <div 
+                            class="w-full bg-blue-100 dark:bg-blue-900/30 rounded-t-lg transition-all duration-500 group-hover:bg-blue-500"
+                            :style="{ height: `${Math.max((day.count / (Math.max(...statistics.weeklyTrend.map(d => d.count)) || 1)) * 100, 5)}%` }"
+                        ></div>
+                        <div class="text-[10px] font-bold text-slate-400 dark:text-slate-500 mt-3">{{ day.label }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Project Distribution -->
+            <div class="bg-white dark:bg-slate-800 p-8 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm">
+                <h3 class="font-black text-slate-800 dark:text-slate-100 mb-6 flex items-center gap-2">
+                    <ListTodo :size="18" class="text-emerald-500"/> {{ t.projectDistribution }}
+                </h3>
+                <div class="space-y-6">
+                    <div v-for="p in statistics.projectDistribution" :key="p.name" class="space-y-2">
+                        <div class="flex justify-between text-xs font-bold">
+                            <span class="text-slate-700 dark:text-slate-300">{{ p.name }}</span>
+                            <span class="text-slate-400">{{ p.completed }} / {{ p.total }}</span>
+                        </div>
+                        <div class="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                            <div 
+                                class="h-full bg-emerald-500 transition-all duration-700" 
+                                :style="{ width: `${p.percent}%` }"
+                            ></div>
+                        </div>
+                    </div>
+                    <div v-if="statistics.projectDistribution.length === 0" class="py-12 text-center text-slate-400 italic">
+                        {{ t.noData }}
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- List View -->
         <div v-if="activeView === 'view'" class="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4 max-w-3xl mx-auto w-full">
             <div class="flex items-center gap-3 mb-6 sm:mb-8">
@@ -1350,16 +1646,41 @@ const onDrop = (e, dayDate) => {
             </div>
 
             <div class="space-y-3 pb-20">
-              <TaskCard 
-                v-for="t in filteredTasks" 
-                :key="t.id" 
-                :task="t" 
-                @toggle="handleToggle" 
-                @delete="handleDeleteTask" 
-                @update="handleUpdateTask"
-                @convert-to-project="handleConvertTaskToProject"
-                @dragstart="onDragStart"
-              />
+              <div v-for="t in filteredTasks" :key="t.id" class="relative">
+                <!-- Reorder Indicator (Top) -->
+                <div v-if="dropTargetIdx === t.lineIndex" class="absolute -top-2 left-0 right-0 h-1 bg-blue-500 rounded-full z-10 shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
+                
+                <div 
+                   @dragover.prevent="dropTargetIdx = t.lineIndex"
+                   @dragleave="dropTargetIdx = null"
+                   @drop="onTaskDrop($event, t.lineIndex)"
+                   class="transition-all duration-200"
+                >
+                  <TaskCard 
+                    :task="t" 
+                    @toggle="handleToggle" 
+                    @toggle-subtask="handleToggleSubtask"
+                    @make-subtask="handleMakeSubtask"
+                    @delete="handleDeleteTask" 
+                    @update="handleUpdateTask"
+                    @convert-to-project="handleConvertTaskToProject"
+                    @dragstart="onDragStart"
+                  />
+                </div>
+
+                <!-- Subtask Indent Drop Zone (Absolute positioning to prevent jitter) -->
+                <div 
+                  @dragover.prevent="activeSubtaskDropIdx = t.lineIndex"
+                  @dragleave="activeSubtaskDropIdx = null"
+                  @drop="onSubtaskDropOnZone($event, t.lineIndex)"
+                  class="ml-12 mt-1 rounded-xl transition-all duration-200 flex items-center justify-center border-2 border-dashed border-transparent overflow-hidden"
+                  :class="activeSubtaskDropIdx === t.lineIndex ? 'h-12 border-blue-400 bg-blue-50/80 dark:bg-blue-900/40' : 'h-2'"
+                >
+                  <span v-if="activeSubtaskDropIdx === t.lineIndex" class="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest flex items-center gap-2 animate-in fade-in zoom-in duration-200">
+                    <CornerDownRight :size="14"/> 松开以建立子任务 (缩进)
+                  </span>
+                </div>
+              </div>
               
               <div v-if="filteredTasks.length === 0" class="py-12 sm:py-24 text-center">
                  <div class="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300 dark:text-slate-700">

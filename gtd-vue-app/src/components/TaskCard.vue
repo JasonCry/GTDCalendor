@@ -1,7 +1,7 @@
 <script setup>
 import { 
   CheckCircle2, Circle, Trash2, Clock, ChevronDown, ChevronRight, ChevronUp, Tag, 
-  Edit3, Check, X as CloseIcon, AlertCircle, ListTodo, Calendar
+  Edit3, Check, X as CloseIcon, AlertCircle, ListTodo, Calendar, CornerDownRight
 } from 'lucide-vue-next';
 import { ref, watch, nextTick, computed } from 'vue';
 
@@ -9,15 +9,40 @@ const props = defineProps({
   task: { type: Object, required: true }
 });
 
-const emit = defineEmits(['toggle', 'delete', 'update', 'convert-to-project', 'dragstart']);
+const emit = defineEmits(['toggle', 'toggle-subtask', 'make-subtask', 'delete', 'update', 'convert-to-project', 'dragstart']);
 
 const showNotes = ref(false);
 const isEditing = ref(false);
+const isSubtaskDropTarget = ref(false);
+
+const onSubtaskDragOver = (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  e.dataTransfer.dropEffect = 'move';
+  isSubtaskDropTarget.value = true;
+};
+
+const onSubtaskDrop = (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  isSubtaskDropTarget.value = false;
+  try {
+    const rawData = e.dataTransfer.getData('task');
+    if (!rawData) return;
+    const taskData = JSON.parse(rawData);
+    if (taskData.lineIndex !== props.task.lineIndex) {
+      emit('make-subtask', taskData.lineIndex, props.task.lineIndex);
+    }
+  } catch (err) {
+    console.error('Subtask drop error:', err);
+  }
+};
 const editForm = ref({
   content: '',
   priority: null,
   tags: '',
-  date: ''
+  date: '',
+  recurrence: null
 });
 
 const datePart = computed({
@@ -51,7 +76,8 @@ const startEditing = () => {
     content: props.task.content,
     priority: props.task.priority,
     tags: props.task.tags.join(' '),
-    date: props.task.date || ''
+    date: props.task.date || '',
+    recurrence: props.task.recurrence || null
   };
   isEditing.value = true;
   nextTick(() => {
@@ -69,7 +95,8 @@ const saveEditing = () => {
     content: editForm.value.content,
     priority: editForm.value.priority,
     tags: tagsArray,
-    date: editForm.value.date || null
+    date: editForm.value.date || null,
+    recurrence: editForm.value.recurrence || null
   });
   isEditing.value = false;
 };
@@ -124,6 +151,10 @@ const getPriorityColor = (prio) => {
         <div class="flex items-center gap-3 flex-wrap">
            <div v-if="task.date" class="text-[10px] text-blue-500 dark:text-blue-400 font-black bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full flex items-center gap-1 border border-blue-100 dark:border-blue-800">
               <Clock :size="10"/> {{ task.date }}
+           </div>
+
+           <div v-if="task.recurrence" class="text-[10px] text-amber-600 dark:text-amber-400 font-black bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 rounded-full flex items-center gap-1 border border-amber-100 dark:border-amber-800">
+              <Repeat :size="10"/> {{ task.recurrence === 'day' ? '每天' : task.recurrence === 'week' ? '每周' : '每月' }}
            </div>
            
            <div v-if="task.tags && task.tags.length" class="flex items-center gap-1">
@@ -207,6 +238,20 @@ const getPriorityColor = (prio) => {
             <input type="text" v-model="editForm.date" placeholder="手动编辑日期 (如: 2024-05-20 14:00)" class="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-[10px] font-bold outline-none text-slate-400 dark:text-slate-500 italic" />
           </div>
         </div>
+
+        <div class="space-y-2">
+          <label class="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest px-1">重复周期</label>
+          <div class="relative">
+            <Repeat class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600" :size="14"/>
+            <select v-model="editForm.recurrence" class="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold outline-none dark:text-slate-200 appearance-none transition-all focus:border-blue-500">
+              <option :value="null">不重复</option>
+              <option value="day">每天</option>
+              <option value="week">每周</option>
+              <option value="month">每月</option>
+            </select>
+          </div>
+        </div>
+
         <div class="space-y-2">
           <label class="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest px-1">标签 (空格分隔)</label>
           <div class="relative">
@@ -226,7 +271,39 @@ const getPriorityColor = (prio) => {
       </div>
     </div>
 
+    <!-- Subtasks Section -->
+    <div v-if="!isEditing && task.subtasks && task.subtasks.length" class="mt-3 ml-8 space-y-2 border-l-2 border-slate-100 dark:border-slate-700/50 pl-4">
+      <div v-for="sub in task.subtasks" :key="sub.lineIndex" 
+           class="flex items-center gap-2 group/sub cursor-pointer"
+           @click.stop="emit('toggle-subtask', sub.lineIndex, sub.completed)">
+        <button class="transition-all shrink-0"
+                :class="sub.completed ? 'text-emerald-500/70 dark:text-emerald-400/60' : 'text-slate-300 dark:text-slate-600 hover:text-blue-400'">
+          <CheckCircle2 v-if="sub.completed" :size="14"/>
+          <Circle v-else :size="14"/>
+        </button>
+        <span class="text-xs transition-all font-medium"
+              :class="sub.completed ? 'text-slate-400 dark:text-slate-500 line-through' : 'text-slate-600 dark:text-slate-200'">
+          {{ sub.content }}
+        </span>
+      </div>
+    </div>
+
+    <!-- Indent to Subtask Drop Zone (Right-shifted strip) -->
+    <div 
+      v-if="!isEditing"
+      @dragover.stop="onSubtaskDragOver"
+      @dragleave.stop="isSubtaskDropTarget = false"
+      @drop.stop="onSubtaskDrop"
+      class="ml-12 mt-1 rounded-xl transition-all duration-200 flex items-center justify-center border-2 border-dashed border-transparent"
+      :class="isSubtaskDropTarget ? 'h-12 border-blue-400 bg-blue-50/50 dark:bg-blue-900/30 py-4' : 'h-1'"
+    >
+      <span v-if="isSubtaskDropTarget" class="text-[10px] font-black text-blue-500 dark:text-blue-400 uppercase tracking-widest flex items-center gap-2 animate-pulse">
+        <CornerDownRight :size="14"/> 松开以建立子任务 (缩进)
+      </span>
+    </div>
+
     <!-- Notes Section -->
+
     <div v-if="showNotes && !isEditing && task.notes && task.notes.length" class="mt-3 pl-8 pr-4 py-3 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-700 space-y-2">
       <div v-for="(note, nIdx) in task.notes" :key="nIdx" 
            class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed break-words"

@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.6] - 2026-01-31
+
+### 🚀 Efficiency & Advanced Features
+This version transforms the application into a high-performance GTD tool with advanced task management and productivity insights.
+
+### ✨ Features
+- **Achievement Center (Review Statistics)**:
+  - New statistics dashboard showing completion counts, success rates, and active streaks.
+  - Weekly productivity trend visualization with interactive CSS bar charts.
+  - Top projects distribution tracking via @done(date) automated tagging.
+- **Advanced Task Management**:
+  - **Task Reordering**: Drag and drop tasks in List View to physically reorder lines in the Markdown file.
+  - **Subtask Checklist**: Full support for nested checklist items using standard Markdown indentation.
+  - **Intuitive Subtask Conversion**: Drag a task to the "indent zone" of another task to instantly convert it into a subtask.
+  - **Recurring Tasks**: New `@every(day/week/month)` syntax. Toggling a task auto-generates the next occurrence with precise date calculation.
+- **UX Refinements**:
+  - **Context-Aware Quick Add**: Adding tasks from "Today" or "Tomorrow" views now auto-assigns the relevant date.
+  - **Jitter-Free Dragging**: Re-engineered drag-and-drop indicators to prevent layout shifts during interaction.
+  - **Subtask UI**: Enhanced visual hierarchy with vertical connecting lines and horizontal indentation.
+
 ## [0.0.5] - 2026-01-31
 
 ### 🌑 Dark Mode & Efficiency Update
