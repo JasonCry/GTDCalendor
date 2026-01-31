@@ -1,9 +1,9 @@
 <script setup>
 import { 
   CheckCircle2, Circle, Trash2, Clock, ChevronDown, ChevronRight, ChevronUp, Tag, 
-  Edit3, Check, X as CloseIcon, AlertCircle, ListTodo
+  Edit3, Check, X as CloseIcon, AlertCircle, ListTodo, Calendar
 } from 'lucide-vue-next';
-import { ref, watch, nextTick } from 'vue';
+import { ref, watch, nextTick, computed } from 'vue';
 
 const props = defineProps({
   task: { type: Object, required: true }
@@ -18,6 +18,30 @@ const editForm = ref({
   priority: null,
   tags: '',
   date: ''
+});
+
+const datePart = computed({
+  get: () => editForm.value.date ? editForm.value.date.split(' ')[0] : '',
+  set: (val) => {
+    const time = timePart.value || '';
+    editForm.value.date = val ? (time ? `${val} ${time}` : val) : (time ? ` ${time}` : '');
+  }
+});
+
+const timePart = computed({
+  get: () => {
+    if (!editForm.value.date) return '';
+    const parts = editForm.value.date.split(' ');
+    return parts.length > 1 ? parts[1] : '';
+  },
+  set: (val) => {
+    const date = datePart.value || '';
+    if (val) {
+      editForm.value.date = date ? `${date} ${val}` : ` ${val}`;
+    } else {
+      editForm.value.date = date;
+    }
+  }
 });
 
 const contentInput = ref(null);
@@ -160,15 +184,27 @@ const getPriorityColor = (prio) => {
       
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 ml-8">
         <div class="space-y-2">
-          <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">优先级 & 日期</label>
-          <div class="flex gap-2">
-            <select v-model="editForm.priority" class="flex-1 p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
-              <option :value="null">无优先级</option>
-              <option :value="1">P1 (高)</option>
-              <option :value="2">P2 (中)</option>
-              <option :value="3">P3 (低)</option>
-            </select>
-            <input type="text" v-model="editForm.date" placeholder="YYYY-MM-DD HH:mm" class="flex-1 p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none" />
+          <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">优先级 & 截止日期</label>
+          <div class="flex flex-col gap-2">
+            <div class="flex gap-2">
+              <select v-model="editForm.priority" class="w-24 p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
+                <option :value="null">无</option>
+                <option :value="1">P1</option>
+                <option :value="2">P2</option>
+                <option :value="3">P3</option>
+              </select>
+              <div class="flex-1 flex gap-1">
+                <div class="relative flex-1">
+                  <Calendar class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" :size="12"/>
+                  <input type="date" v-model="datePart" class="w-full pl-8 pr-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500 transition-all" />
+                </div>
+                <div class="relative w-28">
+                  <Clock class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" :size="12"/>
+                  <input type="time" v-model="timePart" class="w-full pl-8 pr-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500 transition-all" />
+                </div>
+              </div>
+            </div>
+            <input type="text" v-model="editForm.date" placeholder="手动编辑日期 (如: 2024-05-20 14:00)" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold outline-none text-slate-400 italic" />
           </div>
         </div>
         <div class="space-y-2">
