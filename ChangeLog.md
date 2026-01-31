@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.2] - 2026-01-31
+
+### 🚀 File System Integration
+Introduced native local file management, allowing users to own their data completely by editing local Markdown files directly.
+
+### ✨ Features
+- **Local File Access**: Integrated Web File System Access API for direct reading and writing of local `.md` files.
+- **Auto-Save System**:
+  - Implemented smart auto-save with debounce (saves 2s after last edit) to minimize disk I/O.
+  - Added visual "SAVING..." indicator.
+- **External Change Detection**: Real-time monitoring of the file on disk, prompting the user to reload if changes are detected externally.
+- **Default File Setup**: Capability to pin a file as default for auto-loading on startup (permission persistence handled).
+- **UI Enhancements**: Consolidated file operations (Open, Save, Set Default) into a compact icon toolbar in the sidebar.
+
 ## [0.0.1] - 2026-01-31
 
 ### 🚀 Initial Release
