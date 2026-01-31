@@ -58,8 +58,8 @@ const cancelRename = () => {
     <div 
       class="flex items-center gap-2 px-3 py-2.5 rounded-2xl cursor-pointer transition-all border-2 border-transparent"
       :class="[
-        active ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-100',
-        isDragOver ? 'border-blue-400 bg-blue-50' : ''
+        active ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50',
+        isDragOver ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/30' : ''
       ]"
       @click="emit('select', node)"
       @dragover="onDragOver"
@@ -68,7 +68,7 @@ const cancelRename = () => {
       :title="tip"
     >
       <button 
-        class="w-5 h-5 flex items-center justify-center text-slate-400 hover:text-blue-500 transition-colors" 
+        class="w-5 h-5 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-blue-500 transition-colors" 
         @click.stop="emit('toggle', node.path)"
       >
         <template v-if="hasChildren">
@@ -76,7 +76,7 @@ const cancelRename = () => {
           <ChevronRight v-else :size="16" class="stroke-[3]"/>
         </template>
         <template v-else>
-          <component :is="icon" v-if="icon" :size="16" class="text-slate-400"/>
+          <component :is="icon" v-if="icon" :size="16" class="text-slate-400 dark:text-slate-500"/>
           <div v-else class="w-4" />
         </template>
       </button>
@@ -85,11 +85,11 @@ const cancelRename = () => {
         <input 
           ref="inputRef"
           v-model="editName" 
-          class="flex-1 bg-white border border-blue-300 rounded px-1.5 py-0.5 text-sm font-bold outline-none"
+          class="flex-1 bg-white dark:bg-slate-900 border border-blue-300 dark:border-blue-800 rounded px-1.5 py-0.5 text-sm font-bold outline-none dark:text-slate-200"
           @keydown.enter="saveRename"
           @keydown.esc="cancelRename"
         />
-        <button @click="saveRename" class="text-emerald-500 hover:bg-emerald-50 p-1 rounded transition-colors"><Check :size="14"/></button>
+        <button @click="saveRename" class="text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 p-1 rounded transition-colors"><Check :size="14"/></button>
       </div>
       <template v-else>
         <span class="text-sm truncate flex-1 tracking-tight" :class="active ? 'font-black' : 'font-bold'">
@@ -98,7 +98,7 @@ const cancelRename = () => {
         
         <button 
           @click="startRenaming"
-          class="opacity-0 group-hover/proj:opacity-100 p-1 text-slate-300 hover:text-blue-500 rounded transition-all"
+          class="opacity-0 group-hover/proj:opacity-100 p-1 text-slate-300 dark:text-slate-600 hover:text-blue-500 rounded transition-all"
           title="重命名项目"
         >
           <Edit2 :size="12"/>
@@ -106,20 +106,20 @@ const cancelRename = () => {
 
         <button 
           @click.stop="emit('delete', node.path)"
-          class="opacity-0 group-hover/proj:opacity-100 p-1 text-slate-300 hover:text-red-500 rounded transition-all"
+          class="opacity-0 group-hover/proj:opacity-100 p-1 text-slate-300 dark:text-slate-600 hover:text-red-500 rounded transition-all"
           title="删除项目"
         >
           <Trash2 :size="12"/>
         </button>
 
-        <span class="text-[10px] font-bold text-slate-400 px-1">
+        <span class="text-[10px] font-bold text-slate-400 dark:text-slate-500 px-1">
           {{ node.incompleteCount || 0 }}
         </span>
       </template>
     </div>
     
     <!-- Restrict to 2 levels (level 1 nodes can show children, level 2 nodes cannot) -->
-    <div v-if="expanded && node.level < 2" class="ml-5 border-l-2 border-slate-50 pl-1 mt-1">
+    <div v-if="expanded && node.level < 2" class="ml-5 border-l-2 border-slate-50 dark:border-slate-700 pl-1 mt-1">
       <ProjectItem 
         v-for="child in node.children" 
         :key="child.path"

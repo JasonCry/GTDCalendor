@@ -92,8 +92,8 @@ const getPriorityColor = (prio) => {
 
 <template>
   <div 
-    class="flex flex-col p-4 bg-white border rounded-3xl transition-all shadow-sm group cursor-grab active:cursor-grabbing"
-    :class="task.completed ? 'border-slate-100 opacity-60' : 'border-slate-200 hover:border-blue-300 hover:shadow-md'"
+    class="flex flex-col p-4 bg-white dark:bg-slate-800 border rounded-3xl transition-all shadow-sm group cursor-grab active:cursor-grabbing"
+    :class="task.completed ? 'border-slate-100 dark:border-slate-700 opacity-60' : 'border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-500 hover:shadow-md'"
     draggable="true"
     @dragstart="emit('dragstart', $event, task)"
   >
@@ -101,7 +101,7 @@ const getPriorityColor = (prio) => {
       <button 
         @click.stop="emit('toggle', task.lineIndex, task.completed)" 
         class="mt-1 transition-all shrink-0"
-        :class="task.completed ? 'text-emerald-500' : 'text-slate-200 hover:text-blue-500 hover:scale-110 active:scale-90'"
+        :class="task.completed ? 'text-emerald-500 dark:text-emerald-400' : 'text-slate-200 dark:text-slate-600 hover:text-blue-500 hover:scale-110 active:scale-90'"
       >
         <CheckCircle2 v-if="task.completed" :size="20"/>
         <Circle v-else :size="20"/>
@@ -116,24 +116,24 @@ const getPriorityColor = (prio) => {
           </span>
           <h4 
             class="font-bold text-sm transition-all break-words"
-            :class="task.completed ? 'text-slate-300 line-through' : 'text-slate-800'"
+            :class="task.completed ? 'text-slate-300 dark:text-slate-600 line-through' : 'text-slate-800 dark:text-slate-100'"
             v-html="formatContent(task.content)"
           ></h4>
         </div>
 
         <div class="flex items-center gap-3 flex-wrap">
-           <div v-if="task.date" class="text-[10px] text-blue-500 font-black bg-blue-50 px-2 py-0.5 rounded-full flex items-center gap-1 border border-blue-100">
+           <div v-if="task.date" class="text-[10px] text-blue-500 dark:text-blue-400 font-black bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full flex items-center gap-1 border border-blue-100 dark:border-blue-800">
               <Clock :size="10"/> {{ task.date }}
            </div>
            
            <div v-if="task.tags && task.tags.length" class="flex items-center gap-1">
               <div v-for="tag in task.tags" :key="tag" 
-                   class="text-[9px] text-slate-500 font-bold bg-slate-100 px-1.5 py-0.5 rounded-lg flex items-center gap-0.5">
+                   class="text-[9px] text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded-lg flex items-center gap-0.5">
                 <Tag :size="8"/> {{ tag }}
               </div>
            </div>
 
-           <div class="text-[10px] text-slate-400 font-bold tracking-tight uppercase">
+           <div class="text-[10px] text-slate-400 dark:text-slate-500 font-bold tracking-tight uppercase">
               # {{ task.projectPath.split(' / ').pop() }}
            </div>
         </div>
@@ -142,27 +142,27 @@ const getPriorityColor = (prio) => {
       <div class="flex items-center gap-1 shrink-0">
         <button v-if="task.notes && task.notes.length" 
                 @click="showNotes = !showNotes"
-                class="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all">
+                class="p-2 text-slate-300 dark:text-slate-600 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-xl transition-all">
           <ChevronDown v-if="!showNotes" :size="16"/>
           <ChevronUp v-else :size="16"/>
         </button>
         <button 
           @click="startEditing"
-          class="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all"
+          class="opacity-0 group-hover:opacity-100 p-2 text-slate-300 dark:text-slate-600 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-xl transition-all"
           title="编辑任务"
         >
            <Edit3 :size="16"/>
         </button>
         <button 
           @click.stop="emit('convert-to-project', task.lineIndex)"
-          class="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all"
+          class="opacity-0 group-hover:opacity-100 p-2 text-slate-300 dark:text-slate-600 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-xl transition-all"
           title="转换为清单"
         >
            <ListTodo :size="16"/>
         </button>
         <button 
           @click="emit('delete', task.lineIndex)"
-          class="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+          class="opacity-0 group-hover:opacity-100 p-2 text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-xl transition-all"
           title="删除任务"
         >
            <Trash2 :size="16"/>
@@ -173,21 +173,21 @@ const getPriorityColor = (prio) => {
     <!-- Edit Mode -->
     <div v-else class="space-y-4 animate-in fade-in zoom-in-95 duration-200">
       <div class="flex gap-3 items-start">
-        <div class="mt-2 text-blue-500 shrink-0"><Edit3 :size="20"/></div>
+        <div class="mt-2 text-blue-500 dark:text-blue-400 shrink-0"><Edit3 :size="20"/></div>
         <textarea 
           ref="contentInput"
           v-model="editForm.content"
-          class="flex-1 p-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm font-bold text-slate-700 min-h-[80px] resize-none"
+          class="flex-1 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm font-bold text-slate-700 dark:text-slate-200 min-h-[80px] resize-none"
           placeholder="任务内容..."
         ></textarea>
       </div>
       
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 ml-8">
         <div class="space-y-2">
-          <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">优先级 & 截止日期</label>
+          <label class="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest px-1">优先级 & 截止日期</label>
           <div class="flex flex-col gap-2">
             <div class="flex gap-2">
-              <select v-model="editForm.priority" class="w-24 p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none">
+              <select v-model="editForm.priority" class="w-24 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold outline-none dark:text-slate-200">
                 <option :value="null">无</option>
                 <option :value="1">P1</option>
                 <option :value="2">P2</option>
@@ -195,41 +195,41 @@ const getPriorityColor = (prio) => {
               </select>
               <div class="flex-1 flex gap-1">
                 <div class="relative flex-1">
-                  <Calendar class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" :size="12"/>
-                  <input type="date" v-model="datePart" class="w-full pl-8 pr-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500 transition-all" />
+                  <Calendar class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-600 pointer-events-none" :size="12"/>
+                  <input type="date" v-model="datePart" class="w-full pl-8 pr-2 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold outline-none focus:border-blue-500 transition-all dark:text-slate-200" />
                 </div>
                 <div class="relative w-28">
-                  <Clock class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" :size="12"/>
-                  <input type="time" v-model="timePart" class="w-full pl-8 pr-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500 transition-all" />
+                  <Clock class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-600 pointer-events-none" :size="12"/>
+                  <input type="time" v-model="timePart" class="w-full pl-8 pr-2 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold outline-none focus:border-blue-500 transition-all dark:text-slate-200" />
                 </div>
               </div>
             </div>
-            <input type="text" v-model="editForm.date" placeholder="手动编辑日期 (如: 2024-05-20 14:00)" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold outline-none text-slate-400 italic" />
+            <input type="text" v-model="editForm.date" placeholder="手动编辑日期 (如: 2024-05-20 14:00)" class="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-[10px] font-bold outline-none text-slate-400 dark:text-slate-500 italic" />
           </div>
         </div>
         <div class="space-y-2">
-          <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">标签 (空格分隔)</label>
+          <label class="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest px-1">标签 (空格分隔)</label>
           <div class="relative">
-            <Tag class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" :size="14"/>
-            <input v-model="editForm.tags" class="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500 transition-all" placeholder="工作 生活 灵感..." />
+            <Tag class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600" :size="14"/>
+            <input v-model="editForm.tags" class="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold outline-none focus:border-blue-500 transition-all dark:text-slate-200" placeholder="工作 生活 灵感..." />
           </div>
         </div>
       </div>
 
       <div class="flex justify-end gap-2 ml-8 pt-2">
-        <button @click="cancelEditing" class="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-all flex items-center gap-2">
+        <button @click="cancelEditing" class="px-4 py-2 text-xs font-bold text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-all flex items-center gap-2">
           <CloseIcon :size="14"/> 取消
         </button>
-        <button @click="saveEditing" class="px-6 py-2 text-xs font-bold bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all flex items-center gap-2 active:scale-95">
+        <button @click="saveEditing" class="px-6 py-2 text-xs font-bold bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-200 dark:shadow-blue-900/20 transition-all flex items-center gap-2 active:scale-95">
           <Check :size="14"/> 保存更改
         </button>
       </div>
     </div>
 
     <!-- Notes Section -->
-    <div v-if="showNotes && !isEditing && task.notes && task.notes.length" class="mt-3 pl-8 pr-4 py-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-2">
+    <div v-if="showNotes && !isEditing && task.notes && task.notes.length" class="mt-3 pl-8 pr-4 py-3 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-700 space-y-2">
       <div v-for="(note, nIdx) in task.notes" :key="nIdx" 
-           class="text-xs text-slate-500 leading-relaxed break-words"
+           class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed break-words"
            v-html="formatContent(note)">
       </div>
     </div>

@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, nextTick, shallowRef, onUnmounted } fr
 import { 
   CheckCircle2, Layout, FileText, Plus, Menu, Inbox, Hash, Zap, Coffee, Hourglass, 
   ListTodo, Info, ChevronLeft, ChevronRight, ChevronDown, CalendarDays, Clock, Trash2, X, Calendar,
-  FolderOpen, Save, RefreshCw, Pin, Search, Eye, EyeOff, Tag, Languages, Settings, Sun
+  FolderOpen, Save, RefreshCw, Pin, Search, Eye, EyeOff, Tag, Languages, Settings, Sun, Moon
 } from 'lucide-vue-next';
 import TaskCard from './components/TaskCard.vue';
 import ProjectItem from './components/ProjectItem.vue';
@@ -74,11 +74,25 @@ const sidebarOpen = ref(true);
 const isSettingsOpen = ref(false);
 const isLanguageDropdownOpen = ref(false);
 const lang = ref(localStorage.getItem('gtd-lang') || 'zh');
+const isDarkMode = ref(localStorage.getItem('gtd-dark-mode') === 'true');
 const expandedGroups = ref({'📥 收件箱': true, '⚡ 下一步行动': true});
 const isSaving = ref(false);
 const newTaskInput = ref('');
 const viewDate = ref(new Date());
 const quickAddDate = ref(null);
+
+const toggleDarkMode = () => {
+  isDarkMode.value = !isDarkMode.value;
+  localStorage.setItem('gtd-dark-mode', isDarkMode.value);
+};
+
+watch(isDarkMode, (val) => {
+  if (val) {
+    document.documentElement.classList.add('dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+  }
+}, { immediate: true });
 
 const vClickOutside = {
   mounted(el, binding) {
@@ -133,7 +147,9 @@ const t = computed(() => {
       inbox: '收件箱',
       nextActions: '下一步行动',
       waitingFor: '等待确认',
-      somedayMaybe: '将来/也许'
+      somedayMaybe: '将来/也许',
+      darkMode: '深色模式',
+      lightMode: '浅色模式'
     },
     en: {
       allTasks: 'All Tasks',
@@ -171,7 +187,9 @@ const t = computed(() => {
       inbox: 'Inbox',
       nextActions: 'Next Actions',
       waitingFor: 'Waiting For',
-      somedayMaybe: 'Someday/Maybe'
+      somedayMaybe: 'Someday/Maybe',
+      darkMode: 'Dark Mode',
+      lightMode: 'Light Mode'
     }
   };
   return translations[lang.value];
@@ -886,23 +904,27 @@ const onDrop = (e, dayDate) => {
 </script>
 
 <template>
-  <div class="flex h-screen bg-slate-50 text-slate-900 overflow-hidden font-sans select-none" @mouseup="handleGlobalMouseUp">
+  <div class="flex h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 overflow-hidden font-sans select-none" @mouseup="handleGlobalMouseUp">
     <!-- Sidebar -->
-    <div :class="[sidebarOpen ? 'w-80' : 'w-0', 'bg-white border-r border-slate-200 transition-all duration-300 flex flex-col overflow-hidden z-20']">
+    <div :class="[sidebarOpen ? 'w-80' : 'w-0', 'bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 transition-all duration-300 flex flex-col overflow-hidden z-20']">
       <div class="p-6 flex items-center justify-between">
          <div class="relative">
-           <div @click.stop="isLanguageDropdownOpen = !isLanguageDropdownOpen" class="flex items-center gap-3 font-black text-xl text-blue-600 cursor-pointer hover:bg-slate-50 p-2 -m-2 rounded-xl transition-all">
+           <div @click.stop="isLanguageDropdownOpen = !isLanguageDropdownOpen" class="flex items-center gap-3 font-black text-xl text-blue-600 dark:text-blue-400 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 p-2 -m-2 rounded-xl transition-all">
              <CheckCircle2 class="w-8 h-8" /> <span>GTD Flow</span>
              <ChevronDown :size="16" class="text-slate-400" />
            </div>
            
            <!-- Logo Dropdown Menu -->
-           <div v-if="isLanguageDropdownOpen" v-click-outside="() => isLanguageDropdownOpen = false" class="absolute left-0 mt-4 w-48 bg-white border border-slate-100 rounded-2xl shadow-xl z-50 py-2 animate-in fade-in zoom-in-95 duration-200">
-             <button @click="toggleLang(); isLanguageDropdownOpen = false" class="w-full text-left px-4 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-3">
+           <div v-if="isLanguageDropdownOpen" v-click-outside="() => isLanguageDropdownOpen = false" class="absolute left-0 mt-4 w-48 bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl shadow-xl z-50 py-2 animate-in fade-in zoom-in-95 duration-200">
+             <button @click="toggleLang(); isLanguageDropdownOpen = false" class="w-full text-left px-4 py-3 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3">
                <Languages :size="18" class="text-slate-400"/>
                {{ lang === 'zh' ? 'English' : '中文' }}
              </button>
-             <button @click="isSettingsOpen = true; isLanguageDropdownOpen = false" class="w-full text-left px-4 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-3">
+             <button @click="toggleDarkMode(); isLanguageDropdownOpen = false" class="w-full text-left px-4 py-3 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3">
+               <component :is="isDarkMode ? Sun : Moon" :size="18" class="text-slate-400"/>
+               {{ isDarkMode ? t.lightMode : t.darkMode }}
+             </button>
+             <button @click="isSettingsOpen = true; isLanguageDropdownOpen = false" class="w-full text-left px-4 py-3 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3">
                <Settings :size="18" class="text-slate-400"/>
                {{ t.settings }}
              </button>
@@ -918,73 +940,73 @@ const onDrop = (e, dayDate) => {
         <!-- Global Search -->
         <div class="px-4 mt-2">
           <div class="relative group">
-            <Search class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500" :size="14"/>
+            <Search class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-500 group-focus-within:text-blue-500" :size="14"/>
             <input 
               v-model="searchQuery"
-              class="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
+              class="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-700 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all dark:text-slate-200"
               :placeholder="t.searchPlaceholder"
             />
-            <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-50">
+            <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-50 dark:text-slate-500 dark:hover:text-slate-300">
               <X :size="12"/>
             </button>
           </div>
         </div>
 
         <nav class="space-y-0.5">
-          <div class="px-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">{{ t.allTasks }}</div>
+          <div class="px-4 text-[10px] font-black text-slate-300 dark:text-slate-600 uppercase tracking-[0.2em] mb-2 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100 dark:after:bg-slate-700">{{ t.allTasks }}</div>
           
           <div @click="selectedFilter = {type: 'all', value: 'ALL'}; activeView = 'view'" 
                class="flex items-center justify-between px-4 py-2 cursor-pointer rounded-xl transition-all group"
-               :class="selectedFilter.type === 'all' && activeView === 'view' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
+               :class="selectedFilter.type === 'all' && activeView === 'view' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 dark:shadow-blue-900/20' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'">
             <div class="flex items-center gap-3">
-              <ListTodo :size="20" :class="selectedFilter.type === 'all' && activeView === 'view' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+              <ListTodo :size="20" :class="selectedFilter.type === 'all' && activeView === 'view' ? 'text-white' : 'text-slate-400 dark:text-slate-500 group-hover:text-blue-500'"/>
               <span class="text-sm font-bold">{{ t.allTasks }}</span>
             </div>
             <button @click.stop="hideCompleted = !hideCompleted" 
                     class="p-1.5 rounded-lg transition-colors hover:bg-white/20"
                     :title="hideCompleted ? '显示已完成' : '隐藏已完成'">
-              <component :is="hideCompleted ? EyeOff : Eye" :size="16" :class="selectedFilter.type === 'all' && activeView === 'view' ? 'text-blue-200' : 'text-slate-300'"/>
+              <component :is="hideCompleted ? EyeOff : Eye" :size="16" :class="selectedFilter.type === 'all' && activeView === 'view' ? 'text-blue-200' : 'text-slate-300 dark:text-slate-600'"/>
             </button>
           </div>
 
           <!-- Time Filters -->
           <div @click="selectedFilter = {type: 'time', value: 'today'}; activeView = 'view'" 
                class="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-xl transition-all group"
-               :class="selectedFilter.type === 'time' && selectedFilter.value === 'today' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
-            <Sun :size="20" :class="selectedFilter.type === 'time' && selectedFilter.value === 'today' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+               :class="selectedFilter.type === 'time' && selectedFilter.value === 'today' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 dark:shadow-blue-900/20' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'">
+            <Sun :size="20" :class="selectedFilter.type === 'time' && selectedFilter.value === 'today' ? 'text-white' : 'text-slate-400 dark:text-slate-500 group-hover:text-blue-500'"/>
             <span class="text-sm font-bold">{{ t.today }}</span>
           </div>
 
           <div @click="selectedFilter = {type: 'time', value: 'tomorrow'}; activeView = 'view'" 
                class="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-xl transition-all group"
-               :class="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
-            <Calendar :size="20" :class="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+               :class="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 dark:shadow-blue-900/20' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'">
+            <Calendar :size="20" :class="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow' ? 'text-white' : 'text-slate-400 dark:text-slate-500 group-hover:text-blue-500'"/>
             <span class="text-sm font-bold">{{ t.tomorrow }}</span>
           </div>
 
           <div @click="selectedFilter = {type: 'time', value: 'week'}; activeView = 'view'" 
                class="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-xl transition-all group"
-               :class="selectedFilter.type === 'time' && selectedFilter.value === 'week' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
-            <CalendarDays :size="20" :class="selectedFilter.type === 'time' && selectedFilter.value === 'week' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+               :class="selectedFilter.type === 'time' && selectedFilter.value === 'week' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 dark:shadow-blue-900/20' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'">
+            <CalendarDays :size="20" :class="selectedFilter.type === 'time' && selectedFilter.value === 'week' ? 'text-white' : 'text-slate-400 dark:text-slate-500 group-hover:text-blue-500'"/>
             <span class="text-sm font-bold">{{ t.next7Days }}</span>
           </div>
           
           <div @click="activeView = 'calendar'" 
                class="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-xl transition-all group"
-               :class="activeView === 'calendar' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'">
-            <Calendar :size="20" :class="activeView === 'calendar' ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'"/>
+               :class="activeView === 'calendar' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 dark:shadow-blue-900/20' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'">
+            <Calendar :size="20" :class="activeView === 'calendar' ? 'text-white' : 'text-slate-400 dark:text-slate-500 group-hover:text-blue-500'"/>
             <span class="text-sm font-bold">{{ t.calendar }}</span>
           </div>
         </nav>
 
         <nav class="space-y-0.5">
-          <div class="px-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 mt-6 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">标签</div>
+          <div class="px-4 text-[10px] font-black text-slate-300 dark:text-slate-600 uppercase tracking-[0.2em] mb-2 mt-6 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100 dark:after:bg-slate-700">标签</div>
           <div class="flex flex-wrap gap-1.5 px-4 py-1">
             <button 
               v-for="tag in allTags" :key="tag"
               @click="selectedTag = tag === selectedTag ? null : tag"
               class="px-2 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center gap-1"
-              :class="selectedTag === tag ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-500 border-slate-200 hover:border-blue-300'"
+              :class="selectedTag === tag ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:border-blue-300'"
             >
               #{{ tag }}
             </button>
@@ -992,7 +1014,7 @@ const onDrop = (e, dayDate) => {
         </nav>
         
         <nav class="space-y-0.5">
-          <div class="px-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 mt-6 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">活跃项目 ({{ activeProjects.length }})</div>
+          <div class="px-4 text-[10px] font-black text-slate-300 dark:text-slate-600 uppercase tracking-[0.2em] mb-2 mt-6 flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100 dark:after:bg-slate-700">活跃项目 ({{ activeProjects.length }})</div>
           <div v-for="p in activeProjects" :key="p.path" 
                @click="selectedFilter = {type: 'project', value: p.path}; activeView = 'view'"
                @dragover="onDragOver($event); activeProjectsDragOver = p.path"
@@ -1000,19 +1022,19 @@ const onDrop = (e, dayDate) => {
                @drop="activeProjectsDragOver = null; onSidebarDrop($event, p.path)"
                class="flex items-center gap-3 px-4 py-1.5 cursor-pointer rounded-xl transition-all group border-2 border-transparent"
                :class="[
-                 selectedFilter.type === 'project' && selectedFilter.value === p.path ? 'bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-100',
-                 activeProjectsDragOver === p.path ? 'border-blue-400 bg-blue-50' : ''
+                 selectedFilter.type === 'project' && selectedFilter.value === p.path ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50',
+                 activeProjectsDragOver === p.path ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/30' : ''
                ]">
             <div class="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
             <span class="text-sm font-bold truncate flex-1">{{ p.displayName }}</span>
-            <span class="text-[10px] font-bold text-slate-400">{{ p.incompleteCount }}</span>
+            <span class="text-[10px] font-bold text-slate-400 dark:text-slate-500">{{ p.incompleteCount }}</span>
           </div>
         </nav>
 
         <nav class="space-y-0.5">
-          <div class="px-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 mt-6 flex items-center justify-between gap-2">
-            <span class="flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100">工作流与目录</span>
-            <button @click="handleAddProject" class="p-1 hover:bg-slate-100 rounded text-blue-500 transition-colors">
+          <div class="px-4 text-[10px] font-black text-slate-300 dark:text-slate-600 uppercase tracking-[0.2em] mb-2 mt-6 flex items-center justify-between gap-2">
+            <span class="flex items-center gap-2 after:content-[''] after:h-[1px] after:flex-1 after:bg-slate-100 dark:after:bg-slate-700">工作流与目录</span>
+            <button @click="handleAddProject" class="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-blue-500 transition-colors">
               <Plus :size="16"/>
             </button>
           </div>
@@ -1032,17 +1054,17 @@ const onDrop = (e, dayDate) => {
           </template>
         </nav>
 
-        <div class="mt-8 p-4 bg-slate-50 rounded-2xl border border-slate-100">
-           <div class="flex items-center gap-2 text-slate-400 mb-2">
+        <div class="mt-8 p-4 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+           <div class="flex items-center gap-2 text-slate-400 dark:text-slate-500 mb-2">
               <Info :size="14"/>
               <span class="text-[10px] font-bold uppercase tracking-wider">GTD 核心理念</span>
            </div>
            <div v-if="currentFileHandle" class="mb-2">
-               <span class="text-[9px] bg-emerald-50 text-emerald-600 border border-emerald-100 px-1.5 py-0.5 rounded font-mono break-all">
+               <span class="text-[9px] bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800 px-1.5 py-0.5 rounded font-mono break-all">
                   {{ currentFileHandle.name }}
                </span>
            </div>
-           <p class="text-[11px] text-slate-500 leading-relaxed italic">
+           <p class="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed italic">
               捕捉、理清、组织、回顾、执行。
            </p>
         </div>
@@ -1124,23 +1146,23 @@ const onDrop = (e, dayDate) => {
     </div>
 
     <!-- Main Content -->
-    <div class="flex-1 flex flex-col min-w-0 bg-slate-50 relative">
+    <div class="flex-1 flex flex-col min-w-0 bg-slate-50 dark:bg-slate-900 relative">
       <!-- Mobile Overlay -->
-      <div v-if="sidebarOpen" @click="sidebarOpen = false" class="lg:hidden fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-10"></div>
+      <div v-if="sidebarOpen" @click="sidebarOpen = false" class="lg:hidden fixed inset-0 bg-slate-900/20 dark:bg-slate-900/40 backdrop-blur-sm z-10"></div>
 
-      <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 z-10">
+      <header class="h-16 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-6 shrink-0 z-10">
         <div class="flex items-center gap-4">
-          <button @click="sidebarOpen = !sidebarOpen" class="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-400"><Menu :size="20"/></button>
-          <h2 class="font-bold text-lg text-slate-700 truncate max-w-[150px] sm:max-w-[300px]">
+          <button @click="sidebarOpen = !sidebarOpen" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors text-slate-400 dark:text-slate-500"><Menu :size="20"/></button>
+          <h2 class="font-bold text-lg text-slate-700 dark:text-slate-200 truncate max-w-[150px] sm:max-w-[300px]">
             {{ getHeaderTitle }}
           </h2>
         </div>
         
         <div class="flex items-center gap-2 sm:gap-4">
-          <div v-if="activeView === 'calendar'" class="hidden sm:flex items-center bg-slate-100 p-1 rounded-xl">
+          <div v-if="activeView === 'calendar'" class="hidden sm:flex items-center bg-slate-100 dark:bg-slate-900/50 p-1 rounded-xl">
             <button v-for="m in ['day', 'week', 'month']" :key="m" @click="calendarMode = m"
               class="px-4 py-1.5 text-xs font-bold rounded-lg transition-all"
-              :class="calendarMode === m ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'"
+              :class="calendarMode === m ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'"
             >
               {{ m === 'day' ? '日' : m === 'week' ? '周' : '月' }}
             </button>
@@ -1150,7 +1172,7 @@ const onDrop = (e, dayDate) => {
             <button 
               @click="activeView = (activeView === 'code' ? 'view' : 'code')" 
               class="px-3 py-2 sm:px-4 sm:py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-2"
-              :class="activeView === 'code' ? 'bg-blue-600 text-white' : 'bg-slate-900 text-white hover:bg-slate-800'"
+              :class="activeView === 'code' ? 'bg-blue-600 text-white' : 'bg-slate-900 dark:bg-slate-700 text-white hover:bg-slate-800 dark:hover:bg-slate-600'"
             >
               <Layout v-if="activeView === 'code'" :size="14"/>
               <FileText v-else :size="14"/>
@@ -1166,33 +1188,33 @@ const onDrop = (e, dayDate) => {
         <div v-if="activeView === 'calendar'" class="flex-1 flex flex-col p-3 sm:p-6 overflow-hidden">
           <div class="flex justify-between items-center mb-4 sm:mb-6">
             <div class="flex gap-2">
-              <button @click="navigateDate(-1)" class="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors shadow-sm"><ChevronLeft :size="20"/></button>
-              <button @click="viewDate = new Date()" class="px-4 sm:px-6 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold hover:bg-slate-50 transition-colors shadow-sm">今</button>
-              <button @click="navigateDate(1)" class="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors shadow-sm"><ChevronRight :size="20"/></button>
+              <button @click="navigateDate(-1)" class="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-sm"><ChevronLeft :size="20"/></button>
+              <button @click="viewDate = new Date()" class="px-4 sm:px-6 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-sm text-slate-700 dark:text-slate-200">今</button>
+              <button @click="navigateDate(1)" class="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-sm"><ChevronRight :size="20"/></button>
             </div>
-            <div class="text-blue-600 font-bold bg-blue-50 px-4 py-2 rounded-full text-xs sm:text-sm flex items-center gap-2 shadow-sm border border-blue-100">
+            <div class="text-blue-600 dark:text-blue-400 font-bold bg-blue-50 dark:bg-blue-900/30 px-4 py-2 rounded-full text-xs sm:text-sm flex items-center gap-2 shadow-sm border border-blue-100 dark:border-blue-800">
                 <CalendarDays :size="16"/> {{ calendarMode === 'week' ? '本周日程' : formatDate(viewDate) }}
             </div>
           </div>
 
-          <div class="flex-1 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+          <div class="flex-1 bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col overflow-hidden">
             <!-- Header Row -->
-            <div class="grid border-b border-slate-100 bg-slate-50/50 shrink-0"
+            <div class="grid border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 shrink-0"
                  :class="calendarMode === 'month' ? 'grid-cols-7' : 'grid-cols-[50px_1fr] sm:grid-cols-[80px_1fr]'">
                 <template v-if="calendarMode === 'month'">
                     <div v-for="d in ['日', '一', '二', '三', '四', '五', '六']" :key="d" 
-                         class="py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest border-r last:border-0 border-slate-100">
+                         class="py-3 text-center text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest border-r last:border-0 border-slate-100 dark:border-slate-700">
                          {{d}}
                     </div>
                 </template>
                 <template v-else>
-                    <div class="w-[50px] sm:w-20 border-r border-slate-100" />
+                    <div class="w-[50px] sm:w-20 border-r border-slate-100 dark:border-slate-700" />
                     <div class="grid w-full" :class="calendarMode === 'day' ? 'grid-cols-1' : 'grid-cols-7'">
-                        <div v-for="(day, idx) in calendarDays" :key="idx" class="py-3 text-center border-r last:border-0 border-slate-100">
-                            <div class="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
+                        <div v-for="(day, idx) in calendarDays" :key="idx" class="py-3 text-center border-r last:border-0 border-slate-100 dark:border-slate-700">
+                            <div class="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-tighter">
                                 {{ day ? ['日', '一', '二', '三', '四', '五', '六'][new Date(day.date).getDay()] : '' }}
                             </div>
-                            <div class="text-sm font-black mt-1" :class="day?.date === getToday() ? 'text-blue-600 underline underline-offset-4 decoration-2' : 'text-slate-700'">
+                            <div class="text-sm font-black mt-1" :class="day?.date === getToday() ? 'text-blue-600 dark:text-blue-400 underline underline-offset-4 decoration-2' : 'text-slate-700 dark:text-slate-300'">
                                 {{ day ? day.day : '' }}
                             </div>
                         </div>
@@ -1201,38 +1223,38 @@ const onDrop = (e, dayDate) => {
             </div>
             
             <!-- Body -->
-            <div ref="scrollRef" class="flex-1 overflow-y-auto custom-scrollbar relative bg-[#fafafa]">
+            <div ref="scrollRef" class="flex-1 overflow-y-auto custom-scrollbar relative bg-[#fafafa] dark:bg-slate-900/50">
               <div class="h-full" :class="calendarMode === 'month' ? 'grid grid-cols-7' : 'flex'">
                 
                 <template v-if="calendarMode === 'day' || calendarMode === 'week'">
                     <div class="relative min-h-[1440px] flex flex-1">
                         <!-- Time Column -->
-                        <div class="w-[50px] sm:w-20 border-r border-slate-100 bg-slate-50/50 shrink-0 sticky left-0 z-30">
-                            <div v-for="hour in hours" :key="hour" class="h-[60px] relative border-b border-slate-50">
-                                <span class="absolute -top-2 right-1 sm:right-3 text-[10px] font-bold text-slate-300">
+                        <div class="w-[50px] sm:w-20 border-r border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 shrink-0 sticky left-0 z-30">
+                            <div v-for="hour in hours" :key="hour" class="h-[60px] relative border-b border-slate-50 dark:border-slate-800">
+                                <span class="absolute -top-2 right-1 sm:right-3 text-[10px] font-bold text-slate-300 dark:text-slate-600">
                                     {{ String(hour).padStart(2, '0') }}:00
                                 </span>
                             </div>
                         </div>
                         
                         <!-- Columns -->
-                        <div class="grid flex-1 relative bg-white" :class="calendarMode === 'day' ? 'grid-cols-1' : 'grid-cols-7'">
+                        <div class="grid flex-1 relative bg-white dark:bg-slate-800" :class="calendarMode === 'day' ? 'grid-cols-1' : 'grid-cols-7'">
                             <div v-for="(day, dayIdx) in calendarDays" :key="dayIdx"
-                                class="relative border-r last:border-0 border-slate-100"
+                                class="relative border-r last:border-0 border-slate-100 dark:border-slate-700"
                                 @dragover.prevent
                                 @drop="(e) => day && onDrop(e, day.date)">
                                 
                                 <!-- Time Slots Background & Selection -->
                                 <div v-for="mTotal in timeSlots" :key="mTotal"
                                      class="h-[15px] w-full relative group/slot"
-                                     :class="mTotal % 60 === 45 ? 'border-b border-slate-100/60' : ''"
+                                     :class="mTotal % 60 === 45 ? 'border-b border-slate-100/60 dark:border-slate-700/60' : ''"
                                      @mousedown="day && handleTimeMouseDown(day.date, mTotal)"
                                      @mouseenter="day && handleTimeMouseEnter(day.date, mTotal)">
                                     <div class="absolute inset-x-0 top-0 h-[1px] bg-blue-500/0 group-hover/slot:bg-blue-500/20 pointer-events-none" />
                                     <div v-if="isSelecting && selectionStart?.date === day?.date && 
                                               mTotal >= Math.min(selectionStart.minutes, selectionEnd.minutes) &&
                                               mTotal <= Math.max(selectionStart.minutes, selectionEnd.minutes)"
-                                         class="absolute inset-0 bg-blue-100/50 pointer-events-none border-x-2 border-blue-400" />
+                                         class="absolute inset-0 bg-blue-100/50 dark:bg-blue-900/30 pointer-events-none border-x-2 border-blue-400" />
                                 </div>
 
                                 <!-- Tasks -->
@@ -1243,15 +1265,15 @@ const onDrop = (e, dayDate) => {
                                          @dragstart="(e) => onDragStart(e, t)"
                                          @click="selectedTaskForEdit = t"
                                          class="absolute left-1.5 right-1.5 px-2 py-1.5 rounded-xl border shadow-sm transition-all hover:shadow-md cursor-grab active:cursor-grabbing z-10 overflow-hidden group/task"
-                                         :class="t.completed ? 'bg-slate-50 border-slate-200 text-slate-400 opacity-60' : 'bg-white border-blue-200 text-slate-800 border-l-4 border-l-blue-500'"
+                                         :class="t.completed ? 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 opacity-60' : 'bg-white dark:bg-slate-700 border-blue-200 dark:border-blue-800 text-slate-800 dark:text-slate-200 border-l-4 border-l-blue-500 dark:border-l-blue-400'"
                                          :style="{ top: `${parseTaskTime(t.date).totalMinutes}px`, height: '48px' }">
                                         
                                         <div class="text-[10px] font-bold truncate leading-tight" :class="t.completed ? 'line-through' : ''">{{ t.content }}</div>
-                                        <div class="text-[8px] text-slate-400 mt-1 flex items-center justify-between">
+                                        <div class="text-[8px] text-slate-400 dark:text-slate-500 mt-1 flex items-center justify-between">
                                             <span class="flex items-center gap-1 font-mono"><Clock :size="8"/> {{ formatMinutesToTime(parseTaskTime(t.date).totalMinutes) }}</span>
                                             <button 
                                                 @click.stop="handleDeleteTask(t.lineIndex)"
-                                                class="opacity-0 group-hover/task:opacity-100 text-red-400 hover:text-red-600 transition-opacity"
+                                                class="opacity-0 group-hover/task:opacity-100 text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400 transition-opacity"
                                             >
                                                 <Trash2 :size="8"/>
                                             </button>
@@ -1267,15 +1289,15 @@ const onDrop = (e, dayDate) => {
                 <template v-else>
                     <!-- Month View -->
                     <div v-for="(day, idx) in calendarDays" :key="idx" 
-                         class="min-h-[140px] p-2 border-r border-b border-slate-100 relative"
-                         :class="!day ? 'bg-slate-50/30' : 'hover:bg-slate-50/50 transition-colors'">
+                         class="min-h-[140px] p-2 border-r border-b border-slate-100 dark:border-slate-700 relative"
+                         :class="!day ? 'bg-slate-50/30 dark:bg-slate-900/30' : 'hover:bg-slate-50/50 dark:hover:bg-slate-700/50 transition-colors'">
                         <template v-if="day">
                             <div class="text-[10px] font-black w-6 h-6 flex items-center justify-center rounded-full mb-2"
-                                 :class="day.date === getToday() ? 'bg-blue-600 text-white' : 'text-slate-400'">
+                                 :class="day.date === getToday() ? 'bg-blue-600 dark:bg-blue-500 text-white' : 'text-slate-400 dark:text-slate-500'">
                                 {{ day.day }}
                             </div>
                             <div class="space-y-1">
-                                <div v-for="t in day.tasks" :key="t.id" class="text-[9px] truncate px-1.5 py-1 bg-white border border-slate-100 rounded text-slate-600 shadow-xs">
+                                <div v-for="t in day.tasks" :key="t.id" class="text-[9px] truncate px-1.5 py-1 bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded text-slate-600 dark:text-slate-300 shadow-xs">
                                     {{ t.content }}
                                 </div>
                             </div>
@@ -1291,7 +1313,7 @@ const onDrop = (e, dayDate) => {
         <!-- List View -->
         <div v-if="activeView === 'view'" class="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4 max-w-3xl mx-auto w-full">
             <div class="flex items-center gap-3 mb-6 sm:mb-8">
-               <div class="p-3 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-100">
+               <div class="p-3 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-100 dark:shadow-blue-900/20">
                   <ListTodo v-if="selectedFilter.type === 'all'" :size="24"/>
                   <Sun v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'today'" :size="24"/>
                   <Calendar v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow'" :size="24"/>
@@ -1299,10 +1321,10 @@ const onDrop = (e, dayDate) => {
                   <component v-else :is="getGTDIcon(selectedFilter.value)" :size="24"/>
                </div>
                <div>
-                  <h1 class="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">
+                  <h1 class="text-xl sm:text-2xl font-black text-slate-800 dark:text-slate-100 tracking-tight">
                     {{ getHeaderTitle }}
                   </h1>
-                  <p class="text-xs text-slate-400 font-medium">
+                  <p class="text-xs text-slate-400 dark:text-slate-500 font-medium">
                     <template v-if="selectedTag">
                       {{ t.tags }} "#{{ selectedTag }}" : {{ filteredTasks.length }}
                     </template>
@@ -1318,9 +1340,9 @@ const onDrop = (e, dayDate) => {
             </div>
 
             <div class="relative group mb-6 sm:mb-8">
-               <Plus class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500 transition-colors" :size="20"/>
+               <Plus class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600 group-focus-within:text-blue-500 transition-colors" :size="20"/>
                <input 
-                  class="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-2xl outline-none shadow-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-medium text-slate-700 placeholder:text-slate-300"
+                  class="w-full pl-12 pr-4 py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl outline-none shadow-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-medium text-slate-700 dark:text-slate-200 placeholder:text-slate-300 dark:placeholder:text-slate-600"
                   :placeholder="selectedFilter.value === 'ALL' ? '捕捉灵感...' : `在 ${selectedFilter.value.split(' / ').pop()} 中添加任务...`"
                   v-model="newTaskInput"
                   @keydown.enter="addTask(null)"
@@ -1340,22 +1362,22 @@ const onDrop = (e, dayDate) => {
               />
               
               <div v-if="filteredTasks.length === 0" class="py-12 sm:py-24 text-center">
-                 <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
+                 <div class="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300 dark:text-slate-700">
                     <CheckCircle2 :size="32"/>
                  </div>
-                 <p class="text-slate-400 font-medium italic">"没有找到匹配的任务。"</p>
+                 <p class="text-slate-400 dark:text-slate-600 font-medium italic">"没有找到匹配的任务。"</p>
               </div>
             </div>
         </div>
 
         <!-- Code View -->
         <div v-if="activeView === 'code'" class="flex-1 flex flex-col">
-            <div class="bg-slate-800 px-4 py-2 border-b border-slate-700 flex justify-between items-center shrink-0">
+            <div class="bg-slate-800 dark:bg-slate-950 px-4 py-2 border-b border-slate-700 flex justify-between items-center shrink-0">
                 <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">gtd-storage.md</span>
                 <span class="text-[10px] text-slate-500 italic">在此直接编辑 Markdown 同步视图</span>
             </div>
             <textarea 
-                class="flex-1 p-10 font-mono text-xs bg-slate-900 text-slate-300 outline-none leading-relaxed resize-none custom-scrollbar"
+                class="flex-1 p-10 font-mono text-xs bg-slate-900 dark:bg-slate-950 text-slate-300 dark:text-slate-400 outline-none leading-relaxed resize-none custom-scrollbar"
                 v-model="markdown"
                 spellcheck="false"
             />
@@ -1363,16 +1385,16 @@ const onDrop = (e, dayDate) => {
 
         <!-- Quick Add Modal -->
         <div v-if="quickAddDate" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
-          <div class="bg-white w-full max-w-sm p-6 rounded-3xl shadow-2xl border border-slate-100">
+          <div class="bg-white dark:bg-slate-800 w-full max-w-sm p-6 rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-700">
             <div class="flex justify-between items-center mb-6">
-              <h3 class="font-black text-slate-800 text-lg">规划时间段</h3>
-              <button @click="quickAddDate = null" class="p-2 hover:bg-slate-100 rounded-full text-slate-400 transition-colors"><X :size="18"/></button>
+              <h3 class="font-black text-slate-800 dark:text-slate-100 text-lg">规划时间段</h3>
+              <button @click="quickAddDate = null" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-400 transition-colors"><X :size="18"/></button>
             </div>
-            <div class="mb-6 p-4 bg-blue-50 rounded-2xl flex items-center gap-3 text-blue-600 font-bold text-sm border border-blue-100 shadow-inner">
+            <div class="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center gap-3 text-blue-600 dark:text-blue-400 font-bold text-sm border border-blue-100 dark:border-blue-800 shadow-inner">
                <Clock :size="18"/> {{ quickAddDate }}
             </div>
             <input 
-              autofocus class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-4 outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
+              autofocus class="w-full p-4 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-2xl mb-4 outline-none font-bold text-slate-700 dark:text-slate-200 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
               placeholder="这个时段你要做什么？" v-model="newTaskInput"
               @keydown.enter="addTask(quickAddDate)"
             />
@@ -1382,10 +1404,10 @@ const onDrop = (e, dayDate) => {
 
         <!-- Task Edit Modal (for Calendar View) -->
         <div v-if="selectedTaskForEdit" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
-          <div class="bg-white w-full max-w-lg p-1 overflow-hidden rounded-3xl shadow-2xl border border-slate-100">
-             <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-               <h3 class="font-black text-slate-800">编辑任务详情</h3>
-               <button @click="selectedTaskForEdit = null" class="p-2 hover:bg-slate-100 rounded-full text-slate-400"><X :size="18"/></button>
+          <div class="bg-white dark:bg-slate-800 w-full max-w-lg p-1 overflow-hidden rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-700">
+             <div class="p-4 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/30">
+               <h3 class="font-black text-slate-800 dark:text-slate-100">编辑任务详情</h3>
+               <button @click="selectedTaskForEdit = null" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-400"><X :size="18"/></button>
              </div>
              <div class="p-6">
                <TaskCard 
