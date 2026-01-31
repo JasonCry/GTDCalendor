@@ -1,9 +1,11 @@
 <script setup>
-import { 
+import {
   CheckCircle2, Circle, Trash2, Clock, ChevronDown, ChevronRight, ChevronUp, Tag, 
-  Edit3, Check, X as CloseIcon, AlertCircle, ListTodo, Calendar, CornerDownRight
+  Edit3, Check, X as CloseIcon, AlertCircle, ListTodo, Calendar, CornerDownRight,
+  AlertTriangle
 } from 'lucide-vue-next';
 import { ref, watch, nextTick, computed } from 'vue';
+import { isBefore, parseISO, isValid } from 'date-fns';
 
 const props = defineProps({
   task: { type: Object, required: true }
@@ -15,6 +17,14 @@ const showNotes = ref(false);
 const isEditing = ref(false);
 const isSubtaskDropTarget = ref(false);
 
+const isOverdue = computed(() => {
+  if (!props.task.date || props.task.completed) return false;
+  try {
+    const dStr = props.task.date.includes(' ') ? props.task.date.replace(' ', 'T') : props.task.date;
+    const taskDate = parseISO(dStr);
+    return isValid(taskDate) && isBefore(taskDate, new Date());
+  } catch (e) { return false; }
+});
 const onSubtaskDragOver = (e) => {
   e.preventDefault();
   e.stopPropagation();
@@ -149,8 +159,10 @@ const getPriorityColor = (prio) => {
         </div>
 
         <div class="flex items-center gap-3 flex-wrap">
-           <div v-if="task.date" class="text-[10px] text-blue-500 dark:text-blue-400 font-black bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full flex items-center gap-1 border border-blue-100 dark:border-blue-800">
-              <Clock :size="10"/> {{ task.date }}
+           <div v-if="task.date" class="text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border transition-colors"
+                :class="isOverdue ? 'text-red-600 bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800' : 'text-blue-500 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 border-blue-100 dark:border-blue-800'">
+              <AlertTriangle v-if="isOverdue" :size="10" class="animate-pulse"/>
+              <Clock v-else :size="10"/> {{ task.date }}
            </div>
 
            <div v-if="task.recurrence" class="text-[10px] text-amber-600 dark:text-amber-400 font-black bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 rounded-full flex items-center gap-1 border border-amber-100 dark:border-amber-800">

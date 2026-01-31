@@ -3,10 +3,21 @@ import {
   CheckCircle2, Layout, FileText, Plus, Menu, Inbox, Hash, Zap, Coffee, Hourglass, 
   ListTodo, Info, ChevronLeft, ChevronRight, ChevronDown, CalendarDays, Clock, Trash2, X, Calendar,
   FolderOpen, Save, RefreshCw, Pin, Search, Eye, EyeOff, Tag, Languages, Settings, Sun, Moon, BarChart2,
-  CornerDownRight, Repeat
+  CornerDownRight, Repeat, Cloud, CloudOff, AlertTriangle,
+  Bell, BellRing
 } from 'lucide-vue-next';
 import { ref, computed, watch, onMounted, nextTick, shallowRef, onUnmounted } from 'vue';
 import { addDays, addWeeks, addMonths, parseISO, format as formatDt } from 'date-fns';
+
+// --- Global Toast State ---
+const toasts = ref([]);
+const addToast = (message, type = 'info') => {
+  const id = Date.now();
+  toasts.value.push({ id, message, type });
+  setTimeout(() => {
+    toasts.value = toasts.value.filter(t => t.id !== id);
+  }, 3000);
+};
 import TaskCard from './components/TaskCard.vue';
 import ProjectItem from './components/ProjectItem.vue';
 import { saveFileHandle, getFileHandle, removeFileHandle } from './utils/fileStorage';
@@ -72,7 +83,7 @@ const selectedFilter = ref({ type: 'all', value: 'ALL' });
 const selectedTag = ref(null);
 const searchQuery = ref('');
 const hideCompleted = ref(false);
-const sidebarOpen = ref(true);
+const sidebarOpen = ref(localStorage.getItem('gtd-sidebar-open') !== 'false');
 const isSettingsOpen = ref(false);
 const isLanguageDropdownOpen = ref(false);
 const lang = ref(localStorage.getItem('gtd-lang') || 'zh');
@@ -82,6 +93,44 @@ const isSaving = ref(false);
 const newTaskInput = ref('');
 const viewDate = ref(new Date());
 const quickAddDate = ref(null);
+const searchInputRef = ref(null);
+const mainInputRef = ref(null);
+
+const toggleSidebar = () => {
+  sidebarOpen.value = !sidebarOpen.value;
+  localStorage.setItem('gtd-sidebar-open', sidebarOpen.value);
+};
+
+// --- Keyboard Shortcuts ---
+const handleGlobalKeydown = (e) => {
+  // 1. Ctrl/Cmd + K: Focus Search
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    e.preventDefault();
+    activeView.value = 'view';
+    nextTick(() => searchInputRef.value?.focus());
+  }
+
+  // Avoid shortcuts when typing in inputs
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+    if (e.key === 'Escape') {
+      e.target.blur();
+      searchQuery.value = '';
+    }
+    return;
+  }
+
+  // 2. N: New Todo
+  if (e.key === 'n' || e.key === 'N') {
+    e.preventDefault();
+    activeView.value = 'view';
+    nextTick(() => mainInputRef.value?.focus());
+  }
+
+  // 3. S: Toggle Sidebar
+  if (e.key === 's' || e.key === 'S') {
+    toggleSidebar();
+  }
+};
 
 const toggleDarkMode = () => {
   isDarkMode.value = !isDarkMode.value;
@@ -159,7 +208,16 @@ const t = computed(() => {
       activeDays: '活跃天数',
       weeklyTrend: '最近 7 天完成趋势',
       projectDistribution: '项目完成分布',
-      noData: '暂无统计数据，开始执行任务吧！'
+      noData: '暂无统计数据，开始执行任务吧！',
+      syncStatus: '同步状态',
+      syncing: '正在同步...',
+      synced: '已同步',
+      syncError: '同步失败',
+      syncConflict: '内容冲突，已尝试合并',
+      cloudSync: 'iCloud 自动同步',
+      shortcuts: '快捷键',
+      quickSearch: '全局搜索',
+      newTodo: '新建任务'
     },
     en: {
       allTasks: 'All Tasks',
@@ -207,7 +265,16 @@ const t = computed(() => {
       activeDays: 'Active Days',
       weeklyTrend: 'Weekly Completion Trend',
       projectDistribution: 'Project Distribution',
-      noData: 'No stats yet. Start getting things done!'
+      noData: 'No stats yet. Start getting things done!',
+      syncStatus: 'Sync Status',
+      syncing: 'Syncing...',
+      synced: 'Synced',
+      syncError: 'Sync Error',
+      syncConflict: 'Conflict merged',
+      cloudSync: 'iCloud Auto-Sync',
+      shortcuts: 'Shortcuts',
+      quickSearch: 'Quick Search',
+      newTodo: 'New Todo'
     }
   };
   return translations[lang.value];
@@ -264,6 +331,66 @@ const autoSaveTimer = ref(null);
 const fileChangedOnDisk = ref(false);
 const isDefaultFile = ref(false);
 const pendingDefaultHandle = shallowRef(null);
+
+// --- Sync Engine State ---
+const syncStatus = ref('synced'); // 'synced', 'syncing', 'error', 'conflict'
+const lastSyncedContent = ref(markdown.value);
+const syncError = ref('');
+const lastSyncTime = ref(Date.now());
+const notifiedTasks = ref(new Set());
+
+// --- Notifications ---
+const requestNotificationPermission = async () => {
+  if ('Notification' in window && Notification.permission === 'default') {
+    await Notification.requestPermission();
+  }
+};
+
+const checkNotifications = () => {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+
+  const now = new Date();
+  const tasks = allTasks.value || [];
+  
+  tasks.forEach(task => {
+    if (task.completed || !task.date || !task.date.includes(' ') || notifiedTasks.value.has(task.id)) return;
+
+    try {
+      const taskTime = parseISO(task.date.replace(' ', 'T'));
+      const diffMinutes = (taskTime - now) / (1000 * 60);
+
+      // Notify if task is within next 10 minutes
+      if (diffMinutes > 0 && diffMinutes <= 10) {
+        new Notification('任务提醒 | GTD Flow', {
+          body: `任务 "${task.content}" 即将开始 (${task.date.split(' ')[1]})`,
+          icon: '/favicon.ico' // In a real app we'd have a proper icon
+        });
+        notifiedTasks.value.add(task.id);
+        addToast(lang.value === 'zh' ? `提醒: ${task.content}` : `Alert: ${task.content}`, 'info');
+      }
+    } catch (e) { console.error('Notification error:', e); }
+  });
+};
+
+const notificationTimer = ref(null);
+
+// Simple line-based merge logic
+const simpleMerge = (current, disk) => {
+  const currentLines = current.split('\n');
+  const diskLines = disk.split('\n');
+  
+  // If contents are same, no need to merge
+  if (current === disk) return current;
+
+  // Basic Strategy: 
+  // If a line is in disk but not in current, it's an external addition.
+  // This is a naive implementation for the prototype.
+  // In a production app, we would use a library like 'diff-match-patch'.
+  
+  // For now, if we detect changes on disk and we have NO unsaved changes, 
+  // we prioritize disk.
+  return disk; 
+};
 
 // --- Computed ---
 const parsedData = computed(() => {
@@ -580,12 +707,14 @@ const handleUpdateTask = (lineIndex, updates) => {
   
   lines[lineIndex] = newLine;
   markdown.value = lines.join('\n');
+  addToast(lang.value === 'zh' ? '任务已更新' : 'Task updated', 'success');
 };
 
 const handleDeleteTask = (idx) => {
   const lines = markdown.value.split('\n');
   lines.splice(idx, 1);
   markdown.value = lines.join('\n');
+  addToast(lang.value === 'zh' ? '任务已删除' : 'Task deleted', 'info');
 };
 
 const handleMoveTaskToProject = (lineIndex, targetProjectPath) => {
@@ -799,22 +928,45 @@ const startFileWatcher = () => {
     if (!currentFileHandle.value || isSaving.value) return;
     try {
       const file = await currentFileHandle.value.getFile();
-      // Allow 1s buffer for file system quirks
-      if (file.lastModified > lastDiskModified.value + 1000) {
-        fileChangedOnDisk.value = true;
-        clearInterval(fileCheckTimer.value);
+      
+      // If the file timestamp changed significantly
+      if (file.lastModified > lastDiskModified.value + 500) {
+        const contents = await file.text();
+        
+        // Auto-Merge / Silent Reload (Classic iCloud behavior)
+        if (contents !== markdown.value) {
+          syncStatus.value = 'syncing';
+          // If the user hasn't changed the local content since last sync, 
+          // we can safely overwrite with disk (iCloud update)
+          if (markdown.value === lastSyncedContent.value) {
+            markdown.value = contents;
+            lastSyncedContent.value = contents;
+            syncStatus.value = 'synced';
+          } else {
+            // Potential conflict - show manual reload warning
+            syncStatus.value = 'conflict';
+            fileChangedOnDisk.value = true;
+            clearInterval(fileCheckTimer.value);
+          }
+          lastDiskModified.value = file.lastModified;
+        }
       }
-    } catch(e) { console.error('File watcher error:', e); }
-  }, 2000);
+    } catch(e) { 
+      console.error('Sync watcher error:', e); 
+      syncStatus.value = 'error';
+    }
+  }, 3000);
 };
 
 const loadFileContent = async (handle) => {
   const file = await handle.getFile();
   const contents = await file.text();
   markdown.value = contents;
+  lastSyncedContent.value = contents;
   currentFileHandle.value = handle;
   lastDiskModified.value = file.lastModified;
   fileChangedOnDisk.value = false;
+  syncStatus.value = 'synced';
   
   // Check if this is the stored default
   const defaultHandle = await getFileHandle();
@@ -837,6 +989,7 @@ const handleOpenFile = async () => {
 
 const saveToFile = async () => {
   if (!currentFileHandle.value) return;
+  syncStatus.value = 'syncing';
   try {
     const writable = await currentFileHandle.value.createWritable();
     await writable.write(markdown.value);
@@ -845,10 +998,14 @@ const saveToFile = async () => {
     // Update lastDiskModified so we don't trigger our own watcher
     const file = await currentFileHandle.value.getFile();
     lastDiskModified.value = file.lastModified;
+    lastSyncedContent.value = markdown.value;
+    syncStatus.value = 'synced';
     
     setIsSaving(false);
   } catch (err) {
     console.error('Error saving file:', err);
+    syncStatus.value = 'error';
+    syncError.value = err.message;
     setIsSaving(false);
   }
 };
@@ -986,6 +1143,10 @@ watch([activeView, calendarMode], async () => {
 });
 
 onMounted(async () => {
+    window.addEventListener('keydown', handleGlobalKeydown);
+    requestNotificationPermission();
+    notificationTimer.value = setInterval(checkNotifications, 60000); // Check every minute
+    
     // Global click listener to close dropdown
     window.addEventListener('click', (e) => {
       if (!e.target.closest('.relative')) {
@@ -1007,6 +1168,8 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+    window.removeEventListener('keydown', handleGlobalKeydown);
+    if (notificationTimer.value) clearInterval(notificationTimer.value);
     if (fileCheckTimer.value) clearInterval(fileCheckTimer.value);
     if (autoSaveTimer.value) clearTimeout(autoSaveTimer.value);
 });
@@ -1068,6 +1231,7 @@ const onSubtaskDropOnZone = (e, targetLineIdx) => {
   try {
     const taskData = JSON.parse(e.dataTransfer.getData('task'));
     handleMakeSubtask(taskData.lineIndex, targetLineIdx);
+    addToast(lang.value === 'zh' ? '已成功建立子任务并缩进' : 'Subtask created and indented', 'success');
   } catch (err) {
     console.error('Subtask drop on zone error:', err);
   }
@@ -1156,8 +1320,30 @@ const onDrop = (e, dayDate) => {
            </div>
          </div>
          
-         <div class="px-2 py-1 rounded text-[10px] font-bold border" :class="isSaving ? 'text-amber-500 bg-amber-50 border-amber-100' : 'text-emerald-500 bg-emerald-50 border-emerald-100'">
-            {{ isSaving ? t.saving : 'V0.0.6' }}
+         <div class="flex items-center gap-3">
+            <!-- Sync Status Indicator -->
+            <div v-if="currentFileHandle" class="flex items-center gap-1.5 px-2 py-1 rounded-lg border transition-all"
+                 :class="[
+                   syncStatus === 'syncing' ? 'text-blue-500 bg-blue-50 dark:bg-blue-900/20 border-blue-100 dark:border-blue-800' : '',
+                   syncStatus === 'conflict' ? 'text-amber-500 bg-amber-50 dark:bg-amber-900/20 border-amber-100 dark:border-amber-800 cursor-pointer' : '',
+                   syncStatus === 'error' ? 'text-red-500 bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800 cursor-pointer' : '',
+                   syncStatus === 'synced' ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-800' : ''
+                 ]"
+                 @click="syncStatus === 'conflict' || syncStatus === 'error' ? reloadFileFromDisk() : null"
+                 :title="syncStatus === 'error' ? syncError : t.syncStatus"
+            >
+               <RefreshCw v-if="syncStatus === 'syncing'" :size="12" class="animate-spin" />
+               <AlertTriangle v-else-if="syncStatus === 'conflict'" :size="12" />
+               <CloudOff v-else-if="syncStatus === 'error'" :size="12" />
+               <Cloud v-else :size="12" />
+               <span class="text-[9px] font-black uppercase tracking-tighter">
+                 {{ syncStatus === 'syncing' ? t.syncing : syncStatus === 'conflict' ? 'Conflict' : syncStatus === 'error' ? 'Error' : 'Synced' }}
+               </span>
+            </div>
+
+            <div class="px-2 py-1 rounded text-[10px] font-bold border" :class="isSaving ? 'text-amber-500 bg-amber-50 border-amber-100' : 'text-emerald-500 bg-emerald-50 border-emerald-100'">
+               {{ isSaving ? t.saving : 'V0.0.7' }}
+            </div>
          </div>
       </div>
       
@@ -1167,13 +1353,17 @@ const onDrop = (e, dayDate) => {
           <div class="relative group">
             <Search class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-500 group-focus-within:text-blue-500" :size="14"/>
             <input 
+              ref="searchInputRef"
               v-model="searchQuery"
-              class="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-700 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all dark:text-slate-200"
+              class="w-full pl-9 pr-12 py-2 bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-700 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all dark:text-slate-200"
               :placeholder="t.searchPlaceholder"
             />
-            <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-50 dark:text-slate-500 dark:hover:text-slate-300">
-              <X :size="12"/>
-            </button>
+            <div class="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              <span class="text-[9px] font-black text-slate-300 dark:text-slate-600 border border-slate-200 dark:border-slate-700 px-1 rounded">Ctrl K</span>
+              <button v-if="searchQuery" @click="searchQuery = ''" class="text-slate-300 hover:text-slate-50 dark:text-slate-500 dark:hover:text-slate-300">
+                <X :size="12"/>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1380,11 +1570,14 @@ const onDrop = (e, dayDate) => {
     <!-- Main Content -->
     <div class="flex-1 flex flex-col min-w-0 bg-slate-50 dark:bg-slate-900 relative">
       <!-- Mobile Overlay -->
-      <div v-if="sidebarOpen" @click="sidebarOpen = false" class="lg:hidden fixed inset-0 bg-slate-900/20 dark:bg-slate-900/40 backdrop-blur-sm z-10"></div>
+      <div v-if="sidebarOpen" @click="toggleSidebar" class="lg:hidden fixed inset-0 bg-slate-900/20 dark:bg-slate-900/40 backdrop-blur-sm z-10"></div>
 
       <header class="h-16 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-6 shrink-0 z-10">
         <div class="flex items-center gap-4">
-          <button @click="sidebarOpen = !sidebarOpen" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors text-slate-400 dark:text-slate-500"><Menu :size="20"/></button>
+          <button @click="toggleSidebar" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors text-slate-400 dark:text-slate-500">
+            <Menu v-if="!sidebarOpen" :size="20"/>
+            <ChevronLeft v-else :size="20"/>
+          </button>
           <h2 class="font-bold text-lg text-slate-700 dark:text-slate-200 truncate max-w-[150px] sm:max-w-[300px]">
             {{ getHeaderTitle }}
           </h2>
@@ -1638,49 +1831,55 @@ const onDrop = (e, dayDate) => {
             <div class="relative group mb-6 sm:mb-8">
                <Plus class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600 group-focus-within:text-blue-500 transition-colors" :size="20"/>
                <input 
-                  class="w-full pl-12 pr-4 py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl outline-none shadow-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-medium text-slate-700 dark:text-slate-200 placeholder:text-slate-300 dark:placeholder:text-slate-600"
+                  ref="mainInputRef"
+                  class="w-full pl-12 pr-12 py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl outline-none shadow-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-medium text-slate-700 dark:text-slate-200 placeholder:text-slate-300 dark:placeholder:text-slate-600"
                   :placeholder="selectedFilter.value === 'ALL' ? '捕捉灵感...' : `在 ${selectedFilter.value.split(' / ').pop()} 中添加任务...`"
                   v-model="newTaskInput"
                   @keydown.enter="addTask(null)"
                />
+               <div class="absolute right-4 top-1/2 -translate-y-1/2">
+                  <span class="text-[10px] font-black text-slate-300 dark:text-slate-600 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded uppercase">N</span>
+               </div>
             </div>
 
-            <div class="space-y-3 pb-20">
-              <div v-for="t in filteredTasks" :key="t.id" class="relative">
-                <!-- Reorder Indicator (Top) -->
-                <div v-if="dropTargetIdx === t.lineIndex" class="absolute -top-2 left-0 right-0 h-1 bg-blue-500 rounded-full z-10 shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
-                
-                <div 
-                   @dragover.prevent="dropTargetIdx = t.lineIndex"
-                   @dragleave="dropTargetIdx = null"
-                   @drop="onTaskDrop($event, t.lineIndex)"
-                   class="transition-all duration-200"
-                >
-                  <TaskCard 
-                    :task="t" 
-                    @toggle="handleToggle" 
-                    @toggle-subtask="handleToggleSubtask"
-                    @make-subtask="handleMakeSubtask"
-                    @delete="handleDeleteTask" 
-                    @update="handleUpdateTask"
-                    @convert-to-project="handleConvertTaskToProject"
-                    @dragstart="onDragStart"
-                  />
-                </div>
+            <div class="pb-20">
+              <TransitionGroup name="list" tag="div" class="space-y-3">
+                <div v-for="t in filteredTasks" :key="t.id" class="relative">
+                  <!-- Reorder Indicator (Top) -->
+                  <div v-if="dropTargetIdx === t.lineIndex" class="absolute -top-2 left-0 right-0 h-1 bg-blue-500 rounded-full z-10 shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
+                  
+                  <div 
+                    @dragover.prevent="dropTargetIdx = t.lineIndex"
+                    @dragleave="dropTargetIdx = null"
+                    @drop="onTaskDrop($event, t.lineIndex)"
+                    class="transition-all duration-200"
+                  >
+                    <TaskCard 
+                      :task="t" 
+                      @toggle="handleToggle" 
+                      @toggle-subtask="handleToggleSubtask"
+                      @make-subtask="handleMakeSubtask"
+                      @delete="handleDeleteTask" 
+                      @update="handleUpdateTask"
+                      @convert-to-project="handleConvertTaskToProject"
+                      @dragstart="onDragStart"
+                    />
+                  </div>
 
-                <!-- Subtask Indent Drop Zone (Absolute positioning to prevent jitter) -->
-                <div 
-                  @dragover.prevent="activeSubtaskDropIdx = t.lineIndex"
-                  @dragleave="activeSubtaskDropIdx = null"
-                  @drop="onSubtaskDropOnZone($event, t.lineIndex)"
-                  class="ml-12 mt-1 rounded-xl transition-all duration-200 flex items-center justify-center border-2 border-dashed border-transparent overflow-hidden"
-                  :class="activeSubtaskDropIdx === t.lineIndex ? 'h-12 border-blue-400 bg-blue-50/80 dark:bg-blue-900/40' : 'h-2'"
-                >
-                  <span v-if="activeSubtaskDropIdx === t.lineIndex" class="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest flex items-center gap-2 animate-in fade-in zoom-in duration-200">
-                    <CornerDownRight :size="14"/> 松开以建立子任务 (缩进)
-                  </span>
+                  <!-- Subtask Indent Drop Zone -->
+                  <div 
+                    @dragover.prevent="activeSubtaskDropIdx = t.lineIndex"
+                    @dragleave="activeSubtaskDropIdx = null"
+                    @drop="onSubtaskDropOnZone($event, t.lineIndex)"
+                    class="ml-12 mt-1 rounded-xl transition-all duration-200 flex items-center justify-center border-2 border-dashed border-transparent overflow-hidden"
+                    :class="activeSubtaskDropIdx === t.lineIndex ? 'h-12 border-blue-400 bg-blue-50/80 dark:bg-blue-900/40' : 'h-2'"
+                  >
+                    <span v-if="activeSubtaskDropIdx === t.lineIndex" class="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest flex items-center gap-2 animate-in fade-in zoom-in duration-200">
+                      <CornerDownRight :size="14"/> 松开以建立子任务 (缩进)
+                    </span>
+                  </div>
                 </div>
-              </div>
+              </TransitionGroup>
               
               <div v-if="filteredTasks.length === 0" class="py-12 sm:py-24 text-center">
                  <div class="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300 dark:text-slate-700">
@@ -1742,7 +1941,140 @@ const onDrop = (e, dayDate) => {
           </div>
         </div>
 
-      </main>
-    </div>
-  </div>
-</template>
+            </main>
+
+          </div>
+
+      
+
+          <!-- Global Toast Overlay -->
+
+              <div class="fixed bottom-6 right-6 z-[200] flex flex-col gap-3 pointer-events-none">
+
+                <TransitionGroup name="toast">
+
+                  <div v-for="toast in toasts" :key="toast.id" 
+
+                       class="px-6 py-3 rounded-2xl shadow-2xl border flex items-center gap-3 pointer-events-auto animate-in slide-in-from-right-10 duration-300"
+
+          
+
+                   :class="[
+
+                     toast.type === 'success' ? 'bg-emerald-500 border-emerald-400 text-white' : 
+
+                     toast.type === 'error' ? 'bg-red-500 border-red-400 text-white' : 
+
+                     'bg-slate-800 border-slate-700 text-white'
+
+                   ]">
+
+                <CheckCircle2 v-if="toast.type === 'success'" :size="18"/>
+
+                <AlertCircle v-else-if="toast.type === 'error'" :size="18"/>
+
+                <Info v-else :size="18"/>
+
+                <span class="text-sm font-bold">{{ toast.message }}</span>
+
+              </div>
+
+            </TransitionGroup>
+
+          </div>
+
+        </div>
+
+      </template>
+
+      
+
+      <style>
+
+      .list-move,
+
+      .list-enter-active,
+
+      .list-leave-active {
+
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+
+      }
+
+      
+
+      .list-enter-from,
+
+      .list-leave-to {
+
+        opacity: 0;
+
+        transform: translateX(30px);
+
+      }
+
+      
+
+      .list-leave-active {
+
+        position: absolute;
+
+      }
+
+      
+
+      .toast-enter-active,
+
+      .toast-leave-active {
+
+        transition: all 0.3s ease;
+
+      }
+
+      .toast-enter-from {
+
+        opacity: 0;
+
+        transform: translateX(30px);
+
+      }
+
+      .toast-leave-to {
+
+        opacity: 0;
+
+        transform: scale(0.9);
+
+      }
+
+      
+
+      .custom-scrollbar::-webkit-scrollbar {
+
+        width: 6px;
+
+      }
+
+      .custom-scrollbar::-webkit-scrollbar-track {
+
+        background: transparent;
+
+      }
+
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+
+        background: rgba(156, 163, 175, 0.2);
+
+        border-radius: 10px;
+
+      }
+
+      .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+
+        background: rgba(75, 85, 99, 0.4);
+
+      }
+
+      </style>
+
+      

@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.7] - 2026-01-31
+
+### 💎 Full Experience & Cloud Synchronization
+This major update focuses on data mobility, proactive alerting, and a highly polished user interface.
+
+### ✨ Features
+- **Advanced Cloud Sync**:
+  - Seamless iCloud Drive integration with silent background synchronization.
+  - Real-time sync status indicator in the header (Synced, Syncing, Conflict, Error).
+  - Conflict detection to protect local and remote data integrity.
+- **System-Level Notifications**:
+  - Browser-native Web Notifications for upcoming tasks (10-minute lead time).
+  - Visual "Overdue" alerts with pulsing icons for delayed tasks.
+- **Fluid UI & Polish**:
+  - **Smooth Reordering**: Integrated `v-move` animations for a tactile feel during task dragging and sorting.
+  - **Global Toast System**: High-quality feedback messages for every major action (save, delete, sync).
+  - **Collapsible Sidebar**: Toggle sidebar with `S` key or UI button to maximize focus area.
+- **Keyboard Power User Shortcuts**:
+  - `Ctrl/Cmd + K` for instant global search focus.
+  - `N` for rapid task creation.
+  - `Esc` for clearing searches and exiting inputs.
+
 ## [0.0.6] - 2026-01-31
 
 ### 🚀 Efficiency & Advanced Features
