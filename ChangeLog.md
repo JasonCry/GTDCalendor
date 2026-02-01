@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-02-01
+
+### 📐 回顾统计字号与发布准备
+- **回顾统计 (Review Statistics)**：侧栏「回顾统计」按钮及成就中心三张卡片标签（累计完成、完成率、活跃天数）字号由 10px 调整为 14px，提升可读性。
+- **最近 7 天趋势图**：柱状图悬停提示与日期标签字号由 10px 调整为 12px。
+- 同步 Todo.md、TaskCard、GtdContext、gtd 类型等相关改动，测试通过后发布。
+
 ## [0.2.0] - 2026-02-01
 
 ### 🧠 Subtask Logic Optimization & Metadata Stripping
