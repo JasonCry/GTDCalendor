@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-02-01
+
+### 🧠 Subtask Logic Optimization & Metadata Stripping
+A specialized update focused on refining the subtask experience by ensuring clean display content and smarter data handling during task nesting.
+
+### ✨ Features
+- **Clean Subtask Display**:
+  - Re-engineered the parser for both Vue and React versions to automatically strip metadata tags (dates, priorities, recurring rules, and tags) from subtask content display.
+  - Subtasks now present a focused, text-only view while retaining full data integrity in the underlying Markdown file.
+- **Smarter Task Conversion**:
+  - The "Convert to Subtask" (Indent) action now automatically removes date tags (`@YYYY-MM-DD`) from the indented lines.
+  - This prevents subtasks from cluttering scheduled views (Today/Tomorrow) with inherited dates that are often irrelevant for individual steps.
+
+### 🛠 UI & Release
+- **Unified Versioning**: Both Vue and React applications synchronized to version **V0.2.0**.
+- **Visual Feedback**: Updated version labels in the UI header to reflect the current release state.
+
 ## [0.0.9] - 2026-02-01
 
 ### 💎 UI Overhaul & Master-Detail Layout
