@@ -107,6 +107,13 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
                   <span>{task.date.split(' ')[0].split('-').slice(1).join('/')}</span>
                 </div>
               )}
+              <button
+                onClick={(e) => { e.stopPropagation(); onDelete(task.lineIndex); }}
+                className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors opacity-0 group-hover:opacity-100"
+                title="删除任务"
+              >
+                <Trash2 size={14} strokeWidth={2.5} />
+              </button>
             </div>
           </div>
         </div>
@@ -129,7 +136,7 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
                 <GripVertical size={16} />
               </div>
 
-              <div className="flex-1 flex items-center gap-3 p-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+              <div className="flex-1 flex items-center gap-3 p-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group/sub">
                 <button 
                   onClick={(e) => { e.stopPropagation(); onToggle(sub.lineIndex, sub.completed); }}
                   className={cn("shrink-0", sub.completed ? "text-emerald-500/60" : "text-slate-300 dark:text-slate-600")}
@@ -139,6 +146,13 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
                 <span className={cn("text-[12px] font-medium flex-1", sub.completed ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-300")}>
                   {sub.content}
                 </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDelete(sub.lineIndex); }}
+                  className="p-1 rounded text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 opacity-0 group-hover/sub:opacity-100 transition-opacity"
+                  title="删除子任务"
+                >
+                  <Trash2 size={12} strokeWidth={2.5} />
+                </button>
               </div>
             </div>
           ))}

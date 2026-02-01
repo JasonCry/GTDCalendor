@@ -2,9 +2,9 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { 
   CheckCircle2, Plus, Menu, ListTodo, ChevronLeft, Clock, Trash2, X, Calendar as CalendarIcon,
   Search, Sun, Moon, BarChart2, Layers, Settings, Languages, Pause, Play, Square, Inbox, Zap, Coffee, Hourglass, Hash,
-  ChevronDown, Info, FolderOpen, Save, Pin
+  ChevronDown, ChevronRight, Info, FolderOpen, Save, Pin, Folder, Edit2
 } from 'lucide-react';
-import { format as formatDt, addDays } from 'date-fns';
+import { format as formatDt, addDays, subDays } from 'date-fns';
 import { AnimatePresence, motion } from 'framer-motion';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -15,7 +15,7 @@ import { getFileHandle, saveFileHandle, removeFileHandle } from './utils/fileSto
 import TaskCard from './components/TaskCard';
 import ProjectItem from './components/ProjectItem';
 import Inspector from './components/Inspector';
-import { Task, ProjectNode } from './types/gtd';
+import { Task, ProjectNode, ProjectGroup } from './types/gtd';
 
 const cn = (...inputs: any[]) => twMerge(clsx(inputs));
 
@@ -35,6 +35,17 @@ const App: React.FC = () => {
   const [isLanguageDropdownOpen, setIsLanguageDropdownOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({'📥 收件箱': true});
+  const [projectGroups, setProjectGroups] = useState<ProjectGroup[]>(() => {
+    try {
+      const raw = localStorage.getItem('gtd-project-groups');
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+  const [expandedFolderGroups, setExpandedFolderGroups] = useState<Record<string, boolean>>({});
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editingGroupName, setEditingGroupName] = useState('');
+  const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
+  const [dragOverUngrouped, setDragOverUngrouped] = useState(false);
   const [hasCurrentFile, setHasCurrentFile] = useState(false);
   const [isDefaultFile, setIsDefaultFile] = useState(false);
 
@@ -57,6 +68,18 @@ const App: React.FC = () => {
     document.addEventListener('click', onDocClick);
     return () => document.removeEventListener('click', onDocClick);
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem('gtd-project-groups', JSON.stringify(projectGroups));
+  }, [projectGroups]);
+
+  const projectPathsSet = useMemo(() => new Set(projects.map(p => p.path)), [projects]);
+  useEffect(() => {
+    setProjectGroups(prev => prev.map(g => ({
+      ...g,
+      projectPaths: g.projectPaths.filter(path => projectPathsSet.has(path))
+    })));
+  }, [projectPathsSet]);
 
   useEffect(() => {
     let cancelled = false;
@@ -202,18 +225,60 @@ const App: React.FC = () => {
   const addTask = () => {
     if (!newTaskInput.trim()) return;
     const lines = markdown.split('\n');
-    const content = `- [ ] ${newTaskInput.trim()}`;
-    let insertIdx = lines.findIndex(l => l.includes('收件箱') || l.toLowerCase().includes('inbox')) + 1;
+    const now = new Date();
+    const todayStr = formatDt(now, 'yyyy-MM-dd');
+    let text = newTaskInput.trim();
+    let date: string | null = null;
+
+    // 1. 继承当前时间筛选：在「今天」「明天」「7 天」视图下新建任务自动带对应日期
+    if (selectedFilter.type === 'time') {
+      if (selectedFilter.value === 'today') date = todayStr;
+      else if (selectedFilter.value === 'tomorrow') date = formatDt(addDays(now, 1), 'yyyy-MM-dd');
+      else if (selectedFilter.value === 'next7Days') date = todayStr; // 默认今天，或可留空
+    }
+
+    // 2. 简单自然语言日期识别：从内容中解析并剥离关键词
+    if (!date) {
+      const lower = text.toLowerCase();
+      if (text.includes('今天') || lower.includes('today')) {
+        date = todayStr;
+        text = text.replace(/今天/g, '').replace(/today/gi, '').trim();
+      } else if (text.includes('明天') || lower.includes('tomorrow')) {
+        date = formatDt(addDays(now, 1), 'yyyy-MM-dd');
+        text = text.replace(/明天/g, '').replace(/tomorrow/gi, '').trim();
+      } else if (text.includes('后天')) {
+        date = formatDt(addDays(now, 2), 'yyyy-MM-dd');
+        text = text.replace(/后天/g, '').trim();
+      } else if (text.includes('下周') || text.includes('下週') || lower.includes('next week')) {
+        date = formatDt(addDays(now, 7), 'yyyy-MM-dd');
+        text = text.replace(/下周|下週/g, '').replace(/next week/gi, '').trim();
+      }
+    }
+
+    const content = date ? `- [ ] ${text} @${date}` : `- [ ] ${text}`;
+    let insertIdx = selectedFilter.type === 'project'
+      ? (() => {
+          const projectName = selectedFilter.value.split(' / ').pop()?.trim();
+          return projectName ? lines.findIndex(l => l.startsWith('#') && l.replace(/^#+\s*/, '').trim() === projectName) + 1 : -1;
+        })()
+      : lines.findIndex(l => l.includes('收件箱') || l.toLowerCase().includes('inbox')) + 1;
     if (insertIdx <= 0) insertIdx = lines.findIndex(l => l.startsWith('#')) + 1;
-    if (insertIdx <= 0) { lines.push(`# 📥 ${t.inbox}`, content); } else { lines.splice(insertIdx, 0, content); }
+    if (insertIdx <= 0) {
+      lines.push(`# 📥 ${t.inbox}`, content);
+    } else {
+      lines.splice(insertIdx, 0, content);
+    }
     saveToDisk(lines.join('\n'));
     setNewTaskInput('');
   };
 
   const handleDeleteTask = (idx: number) => {
+    const task = allTasks.find(t => t.lineIndex === idx);
+    const lineCount = task?.lineCount ?? 1;
     const lines = markdown.split('\n');
-    lines.splice(idx, 1);
+    lines.splice(idx, lineCount);
     saveToDisk(lines.join('\n'));
+    if (selectedTaskId && task && task.id === selectedTaskId) setSelectedTaskId(null);
     addToast(t.deleteSelected, 'info');
   };
 
@@ -254,8 +319,10 @@ const App: React.FC = () => {
     const task = allTasks.find(t => t.lineIndex === idx) || { lineCount: 1 };
     
     let taskLines = lines.splice(idx, task.lineCount || 1);
-    // If a subtask is moved to a project, promote it
-    taskLines = taskLines.map(line => line.replace(/^[\s\t]+-/, '-'));
+    // 仅当移动的是「单行子任务」时提升为父任务；多行（父+子任务）时保留子任务缩进
+    if (taskLines.length === 1 && /^[\s\t]+-/.test(taskLines[0])) {
+      taskLines[0] = taskLines[0].replace(/^[\s\t]+-/, '-');
+    }
 
     const targetName = targetPath.split(' / ').pop()?.trim();
     const targetLevel = targetPath.split(' / ').length;
@@ -310,6 +377,31 @@ const App: React.FC = () => {
     addToast(lang === 'zh' ? '新建项目成功' : 'Project added', 'success');
   };
 
+  const handleRenameProject = useCallback((path: string, newName: string) => {
+    if (!newName.trim()) return;
+    const lines = markdown.split('\n');
+    const pathParts = path.split(' / ').map(s => s.trim());
+    const oldName = pathParts[pathParts.length - 1];
+    const level = pathParts.length;
+    const idx = lines.findIndex(l => {
+      const trimmed = l.trim();
+      if (!trimmed.startsWith('#')) return false;
+      const headLevel = (trimmed.match(/^#+/) || ['#'])[0].length;
+      const name = trimmed.replace(/^#+\s*/, '').trim();
+      return name === oldName && headLevel === level;
+    });
+    if (idx !== -1) {
+      const nameTrimmed = newName.trim();
+      lines[idx] = '#'.repeat(level) + ' ' + nameTrimmed;
+      saveToDisk(lines.join('\n'));
+      if (selectedFilter.type === 'project' && selectedFilter.value === path) {
+        const newPath = pathParts.length === 1 ? nameTrimmed : pathParts.slice(0, -1).join(' / ') + ' / ' + nameTrimmed;
+        setSelectedFilter({ type: 'project', value: newPath });
+      }
+      addToast(lang === 'zh' ? '项目已重命名' : 'Project renamed', 'success');
+    }
+  }, [markdown, saveToDisk, addToast, lang, selectedFilter, setSelectedFilter]);
+
   const handleDeleteProject = useCallback((path: string) => {
     const lines = markdown.split('\n');
     const stack: { level: number; name: string }[] = [];
@@ -353,6 +445,72 @@ const App: React.FC = () => {
     addToast(lang === 'zh' ? '项目已删除' : 'Project deleted', 'info');
   }, [markdown, saveToDisk, addToast, lang, selectedFilter, setSelectedFilter]);
 
+  // --- 项目分组（UI 层）---
+  const projectPathToGroupId = useMemo(() => {
+    const map: Record<string, string> = {};
+    projectGroups.forEach(g => g.projectPaths.forEach(path => { map[path] = g.id; }));
+    return map;
+  }, [projectGroups]);
+
+  const ungroupedProjects = useMemo(() => 
+    projects.filter(p => !projectPathToGroupId[p.path]), 
+    [projects, projectPathToGroupId]
+  );
+
+  const addGroup = useCallback(() => {
+    const name = lang === 'zh' ? '新建组' : 'New group';
+    setProjectGroups(prev => [...prev, { id: `g-${Date.now()}`, name, projectPaths: [] }]);
+    addToast(lang === 'zh' ? '已新建组' : 'Group added', 'success');
+  }, [lang, addToast]);
+
+  const renameGroup = useCallback((groupId: string, newName: string) => {
+    if (!newName.trim()) return;
+    setProjectGroups(prev => prev.map(g => g.id === groupId ? { ...g, name: newName.trim() } : g));
+    addToast(lang === 'zh' ? '组已重命名' : 'Group renamed', 'success');
+  }, [addToast, lang]);
+
+  const deleteGroup = useCallback((groupId: string) => {
+    if (!window.confirm(t.confirmDeleteGroup)) return;
+    setProjectGroups(prev => prev.filter(g => g.id !== groupId));
+    addToast(lang === 'zh' ? '组已删除' : 'Group deleted', 'info');
+  }, [addToast, lang, t.confirmDeleteGroup]);
+
+  const moveProjectToGroup = useCallback((projectPath: string, groupId: string) => {
+    setProjectGroups(prev => prev.map(g => {
+      const has = g.projectPaths.includes(projectPath);
+      if (g.id === groupId) return has ? g : { ...g, projectPaths: [...g.projectPaths, projectPath] };
+      return has ? { ...g, projectPaths: g.projectPaths.filter(p => p !== projectPath) } : g;
+    }));
+  }, []);
+
+  const removeProjectFromGroup = useCallback((projectPath: string) => {
+    setProjectGroups(prev => prev.map(g => 
+      g.projectPaths.includes(projectPath) ? { ...g, projectPaths: g.projectPaths.filter(p => p !== projectPath) } : g
+    ));
+  }, []);
+
+  const getProjectsInGroup = useCallback((group: ProjectGroup) => 
+    group.projectPaths.map(path => projects.find(p => p.path === path)).filter(Boolean) as ProjectNode[],
+    [projects]
+  );
+
+  const handleProjectDragStart = useCallback((e: React.DragEvent, path: string) => {
+    e.dataTransfer.setData('application/x-gtd-project', path);
+    e.dataTransfer.effectAllowed = 'move';
+  }, []);
+
+  const handleGroupDrop = useCallback((e: React.DragEvent, groupId: string) => {
+    e.preventDefault();
+    const path = e.dataTransfer.getData('application/x-gtd-project');
+    if (path) moveProjectToGroup(path, groupId);
+  }, [moveProjectToGroup]);
+
+  const handleUngroupedDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const path = e.dataTransfer.getData('application/x-gtd-project');
+    if (path) removeProjectFromGroup(path);
+  }, [removeProjectFromGroup]);
+
   // --- UI Helpers ---
   const getGTDIcon = (name: string) => {
     if (name.includes('收件箱') || name.toLowerCase().includes('inbox')) return Inbox;
@@ -390,6 +548,42 @@ const App: React.FC = () => {
       return true;
     });
   }, [allTasks, searchQuery, selectedFilter]);
+
+  // GTD 回顾统计：基于已完成任务与项目分布
+  const statistics = useMemo(() => {
+    const total = allTasks.length;
+    const completed = allTasks.filter(t => t.completed).length;
+    const completionRate = total ? Math.round((completed / total) * 100) : 0;
+    const doneDates = allTasks.filter(t => t.completed && t.doneDate).map(t => t.doneDate!.split(' ')[0]);
+    const activeDays = new Set(doneDates).size;
+
+    const now = new Date();
+    const weekDays = Array.from({ length: 7 }, (_, i) => {
+      const d = subDays(now, 6 - i);
+      const fullDate = formatDt(d, 'yyyy-MM-dd');
+      const count = allTasks.filter(t => t.completed && t.doneDate && t.doneDate.startsWith(fullDate)).length;
+      const label = lang === 'zh' ? formatDt(d, 'M/d') : formatDt(d, 'EEE');
+      return { fullDate, label, count };
+    });
+    const maxWeekCount = Math.max(...weekDays.map(d => d.count), 1);
+
+    const projectMap = new Map<string, { total: number; completed: number }>();
+    allTasks.forEach(t => {
+      const path = t.projectPath || (lang === 'zh' ? '未分类' : 'Uncategorized');
+      const cur = projectMap.get(path) ?? { total: 0, completed: 0 };
+      cur.total++;
+      if (t.completed) cur.completed++;
+      projectMap.set(path, cur);
+    });
+    const projectDistribution = Array.from(projectMap.entries()).map(([name, { total: tot, completed: cmp }]) => ({
+      name,
+      total: tot,
+      completed: cmp,
+      percent: tot ? Math.round((cmp / tot) * 100) : 0
+    })).sort((a, b) => b.total - a.total);
+
+    return { totalCompleted: completed, completionRate, activeDays, weeklyTrend: weekDays, maxWeekCount, projectDistribution };
+  }, [allTasks, lang]);
 
   return (
     <div className="flex flex-row w-screen h-screen bg-[#F8FAFC] dark:bg-[#0F172A] text-slate-900 dark:text-slate-100 overflow-hidden font-sans selection:bg-blue-500/30">
@@ -468,54 +662,150 @@ const App: React.FC = () => {
             {/* 🧪 VERIFICATION ROW */}
             <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800/50 rounded-2xl">
               <button 
-                onClick={() => setSelectedFilter({type: 'all', value: 'ALL'})}
+                onClick={() => { setSelectedFilter({type: 'all', value: 'ALL'}); setActiveView('view'); }}
                 className={cn(
                   "flex-1 py-2 rounded-xl text-[10px] font-black transition-all",
-                  selectedFilter.type === 'all' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
+                  selectedFilter.type === 'all' && activeView === 'view' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
                 )}
               >
                 ALL
               </button>
               <button 
-                onClick={() => setSelectedFilter({type: 'time', value: 'today'})}
+                onClick={() => { setSelectedFilter({type: 'time', value: 'today'}); setActiveView('view'); }}
                 className={cn(
                   "flex-1 py-2 rounded-xl text-[10px] font-black transition-all",
-                  (selectedFilter.type === 'time' && selectedFilter.value === 'today') ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
+                  (selectedFilter.type === 'time' && selectedFilter.value === 'today') && activeView === 'view' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
                 )}
               >
                 TODAY
               </button>
               <button 
-                onClick={() => setSelectedFilter({type: 'time', value: 'next7Days'})}
+                onClick={() => { setSelectedFilter({type: 'time', value: 'next7Days'}); setActiveView('view'); }}
                 className={cn(
                   "flex-1 py-2 rounded-xl text-[10px] font-black transition-all",
-                  (selectedFilter.type === 'time' && selectedFilter.value === 'next7Days') ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
+                  (selectedFilter.type === 'time' && selectedFilter.value === 'next7Days') && activeView === 'view' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
                 )}
               >
                 7 DAYS
               </button>
             </div>
+            <button
+              onClick={() => setActiveView('stats')}
+              className={cn(
+                "w-full mt-2 flex items-center gap-3 px-3 py-2.5 rounded-2xl text-sm font-black transition-all",
+                activeView === 'stats' ? "bg-blue-600 text-white shadow-sm" : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50"
+              )}
+            >
+              <BarChart2 size={18} className={activeView === 'stats' ? "text-white" : "text-slate-400"} />
+              {t.review}
+            </button>
           </div>
 
           <div className="space-y-2">
-            <div className="px-3 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-3 flex items-center justify-between">
+            <div className="px-3 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-3 flex items-center justify-between gap-1">
               <span>{t.workflows}</span>
-              <Plus size={14} className="text-blue-500 cursor-pointer hover:rotate-90 transition-transform" />
+              <div className="flex items-center gap-0.5">
+                <button type="button" onClick={addGroup} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors" title={t.newGroup}>
+                  <Folder size={14} className="text-amber-500" />
+                </button>
+                <button type="button" onClick={handleAddProject} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors" title={lang === 'zh' ? '新建项目' : 'New project'}>
+                  <Plus size={14} className="text-blue-500 cursor-pointer hover:rotate-90 transition-transform" />
+                </button>
+              </div>
             </div>
-            {projects.map(p => (
-              <ProjectItem 
-                key={p.path}
-                node={p}
-                expanded={expandedGroups[p.path]}
-                active={selectedFilter.value === p.path}
-                icon={getGTDIcon(p.name)}
-                onToggle={(path) => setExpandedGroups(prev => ({ ...prev, [path]: !prev[path] }))}
-                onSelect={(n) => setSelectedFilter({type: 'project', value: n.path})}
-                onRename={() => {}}
-                onDelete={handleDeleteProject}
-                onDropTask={handleMoveTaskToProject}
-              />
-            ))}
+            {projectGroups.map(g => {
+              const expanded = expandedFolderGroups[g.id] !== false;
+              const isEditing = editingGroupId === g.id;
+              const groupProjects = getProjectsInGroup(g);
+              return (
+                <div key={g.id} className="space-y-0.5">
+                  <div
+                    className={cn(
+                      "px-3 py-2 rounded-2xl border-2 border-dashed transition-colors flex items-center gap-2 min-h-[40px]",
+                      dragOverGroupId === g.id ? "border-blue-400 bg-blue-50/50 dark:bg-blue-900/20" : "border-transparent"
+                    )}
+                    onDragOver={(e) => { e.preventDefault(); setDragOverGroupId(g.id); }}
+                    onDragLeave={() => setDragOverGroupId(null)}
+                    onDrop={(e) => { e.preventDefault(); setDragOverGroupId(null); handleGroupDrop(e, g.id); }}
+                  >
+                    <button type="button" onClick={() => setExpandedFolderGroups(prev => ({ ...prev, [g.id]: !expanded }))} className="shrink-0 text-slate-400">
+                      {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                    {isEditing ? (
+                      <input
+                        value={editingGroupName}
+                        onChange={(e) => setEditingGroupName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { renameGroup(g.id, editingGroupName); setEditingGroupId(null); } if (e.key === 'Escape') setEditingGroupId(null); }}
+                        onBlur={() => { if (editingGroupName.trim()) renameGroup(g.id, editingGroupName); setEditingGroupId(null); }}
+                        className="flex-1 min-w-0 bg-white dark:bg-slate-800 border border-blue-500/30 rounded-lg px-2 py-0.5 text-xs font-bold outline-none"
+                        autoFocus
+                      />
+                    ) : (
+                      <>
+                        <Folder size={14} className="text-amber-500 shrink-0" />
+                        <span className="flex-1 text-[12px] font-bold text-slate-700 dark:text-slate-200 truncate">{g.name}</span>
+                        <button type="button" onClick={() => { setEditingGroupId(g.id); setEditingGroupName(g.name); }} className="p-1 text-slate-400 hover:text-blue-500 rounded" title={t.renameGroup}>
+                          <Edit2 size={11} />
+                        </button>
+                        <button type="button" onClick={() => deleteGroup(g.id)} className="p-1 text-slate-400 hover:text-rose-500 rounded" title={t.deleteGroup}>
+                          <Trash2 size={11} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {expanded && (
+                    <div className="ml-2 pl-2 border-l border-slate-200/50 dark:border-slate-700/50 space-y-0.5">
+                      {groupProjects.map(p => (
+                        <div key={p.path} draggable onDragStart={(e) => handleProjectDragStart(e, p.path)} className="cursor-grab active:cursor-grabbing">
+                          <ProjectItem
+                            node={p}
+                            expanded={expandedGroups[p.path]}
+                            active={selectedFilter.value === p.path}
+                            icon={getGTDIcon(p.name)}
+                            onToggle={(path) => setExpandedGroups(prev => ({ ...prev, [path]: !prev[path] }))}
+                            onSelect={(n) => setSelectedFilter({ type: 'project', value: n.path })}
+                            onRename={handleRenameProject}
+                            onDelete={handleDeleteProject}
+                            onDropTask={handleMoveTaskToProject}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {(projectGroups.length > 0 ? ungroupedProjects : projects).length > 0 && (
+              <div className="mt-2">
+                {projectGroups.length > 0 && (
+                  <div
+                    className={cn("px-3 py-1.5 text-[10px] font-black uppercase tracking-widest flex items-center gap-2 rounded-xl transition-colors", dragOverUngrouped ? "bg-slate-100 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400" : "text-slate-400 dark:text-slate-500")}
+                    onDragOver={(e) => { e.preventDefault(); setDragOverUngrouped(true); }}
+                    onDragLeave={() => setDragOverUngrouped(false)}
+                    onDrop={(e) => { e.preventDefault(); setDragOverUngrouped(false); handleUngroupedDrop(e); }}
+                  >
+                    <span>{t.ungrouped}</span>
+                  </div>
+                )}
+                <div className="space-y-0.5">
+                  {(projectGroups.length > 0 ? ungroupedProjects : projects).map(p => (
+                    <div key={p.path} draggable onDragStart={(e) => handleProjectDragStart(e, p.path)} className="cursor-grab active:cursor-grabbing">
+                      <ProjectItem
+                        node={p}
+                        expanded={expandedGroups[p.path]}
+                        active={selectedFilter.value === p.path}
+                        icon={getGTDIcon(p.name)}
+                        onToggle={(path) => setExpandedGroups(prev => ({ ...prev, [path]: !prev[path] }))}
+                        onSelect={(n) => setSelectedFilter({ type: 'project', value: n.path })}
+                        onRename={handleRenameProject}
+                        onDelete={handleDeleteProject}
+                        onDropTask={handleMoveTaskToProject}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </motion.aside>
@@ -528,8 +818,12 @@ const App: React.FC = () => {
               {sidebarOpen ? <ChevronLeft size={18}/> : <Menu size={18}/>}
             </button>
             <div className="flex flex-col">
-              <h2 className="font-black text-xl tracking-tight text-slate-800 dark:text-slate-100 leading-none mb-1">{t.allTasks}</h2>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{filteredTasks.length} {t.activeProjects}</span>
+              <h2 className="font-black text-xl tracking-tight text-slate-800 dark:text-slate-100 leading-none mb-1">
+                {activeView === 'stats' ? t.achievementCenter : t.allTasks}
+              </h2>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                {activeView === 'stats' ? '' : `${filteredTasks.length} ${t.activeProjects}`}
+              </span>
             </div>
           </div>
 
@@ -545,51 +839,118 @@ const App: React.FC = () => {
         </header>
 
         <div className="flex-1 overflow-y-auto px-8 pb-10 custom-scrollbar">
-          <div className="max-w-4xl mx-auto w-full">
-            <div className="relative group mb-8">
-              <div className="absolute inset-0 bg-blue-500/5 blur-2xl group-focus-within:bg-blue-500/10 transition-all rounded-3xl"></div>
-              <Plus className="absolute left-5 top-1/2 -translate-y-1/2 text-blue-500/50 group-focus-within:text-blue-500 transition-colors" size={20} strokeWidth={3} />
-              <input 
-                ref={mainInputRef}
-                value={newTaskInput}
-                onChange={(e) => setNewTaskInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addTask()}
-                className="relative w-full pl-14 pr-6 py-5 bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 rounded-3xl outline-none shadow-[0_10px_40px_rgba(0,0,0,0.02)] focus:ring-4 focus:ring-blue-500/5 transition-all font-bold text-slate-700 dark:text-slate-100 placeholder:text-slate-300 dark:placeholder:text-slate-600"
-                placeholder={t.quickAddPlaceholder}
-              />
-            </div>
+          {activeView === 'stats' ? (
+            <div className="max-w-4xl mx-auto w-full p-2">
+              {/* GTD 回顾统计：三张概览卡片 */}
+              <div className="grid grid-cols-3 gap-6 mb-8">
+                <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-slate-100 dark:border-slate-700 rounded-3xl p-6 shadow-sm">
+                  <div className="text-sm font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">{t.totalCompleted}</div>
+                  <div className="text-4xl font-black text-blue-600 dark:text-blue-400">{statistics.totalCompleted}</div>
+                </div>
+                <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-slate-100 dark:border-slate-700 rounded-3xl p-6 shadow-sm">
+                  <div className="text-sm font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">{t.completionRate}</div>
+                  <div className="text-4xl font-black text-emerald-500 dark:text-emerald-400">{statistics.completionRate}%</div>
+                </div>
+                <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-slate-100 dark:border-slate-700 rounded-3xl p-6 shadow-sm">
+                  <div className="text-sm font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">{t.activeDays}</div>
+                  <div className="text-4xl font-black text-amber-500 dark:text-amber-400">{statistics.activeDays}</div>
+                </div>
+              </div>
 
-            <div className="space-y-2">
-              <AnimatePresence mode="popLayout">
-                {filteredTasks.map(task => (
-                                      <motion.div
-                                        key={task.id}
-                                        layout
-                                        initial={{ opacity: 0, scale: 0.98, y: 10 }}
-                                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                                        exit={{ opacity: 0, scale: 0.9, x: -20 }}
-                                        transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                                        onDragOver={(e) => e.preventDefault()}
-                                        onDrop={(e) => onTaskDrop(e, task.lineIndex)}
-                                      >
-                                        <TaskCard 
-                                          task={task}
-                                          isActive={selectedTaskId === task.id}
-                                          isBatchMode={isBatchMode}
-                                          selected={selectedTaskIds.has(task.id)}
-                                          onToggle={handleToggle}
-                                          onDelete={handleDeleteTask}
-                                          onSelect={(id) => {}}
-                                          onOpenDetail={(t) => setSelectedTaskId(t.id)}
-                                          onDragStart={onDragStart}
-                                          onMakeSubtask={handleMakeSubtask}
-                                        />
-                                      </motion.div>
-                  
-                ))}
-              </AnimatePresence>
+              {/* 最近 7 天完成趋势 */}
+              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-slate-100 dark:border-slate-700 rounded-3xl p-8 shadow-sm mb-8">
+                <h3 className="font-black text-slate-800 dark:text-slate-100 mb-8 flex items-center gap-2">
+                  <Zap size={18} className="text-blue-500" /> {t.weeklyTrend}
+                </h3>
+                <div className="flex items-end justify-between h-48 gap-2 sm:gap-4 px-2">
+                  {statistics.weeklyTrend.map(day => (
+                    <div key={day.fullDate} className="flex-1 flex flex-col items-center group relative">
+                      <div className="absolute -top-10 bg-slate-900 dark:bg-slate-700 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                        {day.count} {lang === 'zh' ? '任务' : 'tasks'}
+                      </div>
+                      <div
+                        className="w-full bg-blue-100 dark:bg-blue-900/30 rounded-t-lg transition-all duration-500 group-hover:bg-blue-500"
+                        style={{ height: `${Math.max((day.count / statistics.maxWeekCount) * 100, 5)}%` }}
+                      />
+                      <div className="text-xs font-bold text-slate-400 dark:text-slate-500 mt-3">{day.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 项目完成分布 */}
+              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-slate-100 dark:border-slate-700 rounded-3xl p-8 shadow-sm">
+                <h3 className="font-black text-slate-800 dark:text-slate-100 mb-6 flex items-center gap-2">
+                  <ListTodo size={18} className="text-emerald-500" /> {t.projectDistribution}
+                </h3>
+                <div className="space-y-6">
+                  {statistics.projectDistribution.length === 0 ? (
+                    <div className="py-12 text-center text-slate-400 dark:text-slate-500 italic">{t.noData}</div>
+                  ) : (
+                    statistics.projectDistribution.map(p => (
+                      <div key={p.name} className="space-y-2">
+                        <div className="flex justify-between text-xs font-bold">
+                          <span className="text-slate-700 dark:text-slate-300 truncate mr-2">{p.name}</span>
+                          <span className="text-slate-400 shrink-0">{p.completed} / {p.total}</span>
+                        </div>
+                        <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-emerald-500 dark:bg-emerald-400 transition-all duration-700 rounded-full"
+                            style={{ width: `${p.percent}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="max-w-4xl mx-auto w-full">
+              <div className="relative group mb-8">
+                <div className="absolute inset-0 bg-blue-500/5 blur-2xl group-focus-within:bg-blue-500/10 transition-all rounded-3xl"></div>
+                <Plus className="absolute left-5 top-1/2 -translate-y-1/2 text-blue-500/50 group-focus-within:text-blue-500 transition-colors" size={20} strokeWidth={3} />
+                <input 
+                  ref={mainInputRef}
+                  value={newTaskInput}
+                  onChange={(e) => setNewTaskInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addTask()}
+                  className="relative w-full pl-14 pr-6 py-5 bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-slate-200/50 dark:border-slate-700/50 rounded-3xl outline-none shadow-[0_10px_40px_rgba(0,0,0,0.02)] focus:ring-4 focus:ring-blue-500/5 transition-all font-bold text-slate-700 dark:text-slate-100 placeholder:text-slate-300 dark:placeholder:text-slate-600"
+                  placeholder={t.quickAddPlaceholder}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <AnimatePresence mode="popLayout">
+                  {filteredTasks.map(task => (
+                    <motion.div
+                      key={task.id}
+                      layout
+                      initial={{ opacity: 0, scale: 0.98, y: 10 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.9, x: -20 }}
+                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => onTaskDrop(e, task.lineIndex)}
+                    >
+                      <TaskCard 
+                        task={task}
+                        isActive={selectedTaskId === task.id}
+                        isBatchMode={isBatchMode}
+                        selected={selectedTaskIds.has(task.id)}
+                        onToggle={handleToggle}
+                        onDelete={handleDeleteTask}
+                        onSelect={(id) => {}}
+                        onOpenDetail={(t) => setSelectedTaskId(t.id)}
+                        onDragStart={onDragStart}
+                        onMakeSubtask={handleMakeSubtask}
+                      />
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            </div>
+          )}
         </div>
       </main>
 

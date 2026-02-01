@@ -39,3 +39,10 @@ export interface Filter {
   type: 'all' | 'project' | 'time' | 'tag';
   value: string;
 }
+
+/** 项目分组（仅 UI 层，不改变 markdown） */
+export interface ProjectGroup {
+  id: string;
+  name: string;
+  projectPaths: string[];
+}

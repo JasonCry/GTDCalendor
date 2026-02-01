@@ -63,7 +63,11 @@ export const GtdProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       searchPlaceholder: '快捷搜索...', quickAddPlaceholder: '捕捉灵感 (N)...', batch: '批量操作',
       darkMode: '深色模式', lightMode: '浅色模式', deleteSelected: '项已删除', saving: '同步中...',
       fileManagement: '文件管理', openFile: '打开本地文件', saveFile: '保存更改', saveAs: '另存为',
-      setDefault: '设为默认', unsetDefault: '取消默认'
+      setDefault: '设为默认', unsetDefault: '取消默认',
+      review: '回顾统计', achievementCenter: '成就中心', totalCompleted: '累计完成', completionRate: '完成率',
+      activeDays: '活跃天数', weeklyTrend: '最近 7 天完成趋势', projectDistribution: '项目完成分布',
+      noData: '暂无统计数据，开始执行任务吧！',
+      newGroup: '新建组', ungrouped: '未分组', deleteGroup: '删除组', renameGroup: '重命名组', confirmDeleteGroup: '确定删除该组？组内项目将变为未分组。'
     },
     en: {
       allTasks: 'All Tasks', today: 'Today', tomorrow: 'Tomorrow', next7Days: 'Next 7 Days', calendar: 'Calendar',
@@ -72,7 +76,11 @@ export const GtdProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       searchPlaceholder: 'Search...', quickAddPlaceholder: 'Quick Add (N)...', batch: 'Batch Actions',
       darkMode: 'Dark Mode', lightMode: 'Light Mode', deleteSelected: 'items deleted', saving: 'Saving...',
       fileManagement: 'File Management', openFile: 'Open Local File', saveFile: 'Save Changes', saveAs: 'Save As...',
-      setDefault: 'Set as Default', unsetDefault: 'Unset Default'
+      setDefault: 'Set as Default', unsetDefault: 'Unset Default',
+      review: 'Review & Stats', achievementCenter: 'Achievement Center', totalCompleted: 'Completed',
+      completionRate: 'Success Rate', activeDays: 'Active Days', weeklyTrend: 'Weekly Completion Trend',
+      projectDistribution: 'Project Distribution', noData: 'No stats yet. Start getting things done!',
+      newGroup: 'New group', ungrouped: 'Ungrouped', deleteGroup: 'Delete group', renameGroup: 'Rename group', confirmDeleteGroup: 'Delete this group? Projects in it will become ungrouped.'
     }
   }[lang]), [lang]);
 
