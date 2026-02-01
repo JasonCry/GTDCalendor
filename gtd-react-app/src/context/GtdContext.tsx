@@ -37,7 +37,11 @@ interface GtdContextType {
 const GtdContext = createContext<GtdContextType | undefined>(undefined);
 
 export const GtdProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [lang, setLang] = useState(localStorage.getItem('gtd-lang') || 'zh');
+  const [lang, setLangState] = useState(localStorage.getItem('gtd-lang') || 'zh');
+  const setLang = useCallback((l: string) => {
+    setLangState(l);
+    localStorage.setItem('gtd-lang', l);
+  }, []);
   const [isDarkMode, setIsDarkMode] = useState(localStorage.getItem('gtd-dark-mode') === 'true');
   const [sidebarOpen, setSidebarOpen] = useState(localStorage.getItem('gtd-sidebar-open') !== 'false');
   const [activeView, setActiveView] = useState<ViewType>('view');
@@ -57,14 +61,18 @@ export const GtdProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       tags: '标签', activeProjects: '活跃项目', workflows: '工作流与目录', settings: '设置', language: '语言',
       inbox: '收件箱', nextActions: '下一步行动', waitingFor: '等待确认', somedayMaybe: '将来/也许',
       searchPlaceholder: '快捷搜索...', quickAddPlaceholder: '捕捉灵感 (N)...', batch: '批量操作',
-      darkMode: '深色模式', lightMode: '浅色模式', deleteSelected: '项已删除', saving: '同步中...'
+      darkMode: '深色模式', lightMode: '浅色模式', deleteSelected: '项已删除', saving: '同步中...',
+      fileManagement: '文件管理', openFile: '打开本地文件', saveFile: '保存更改', saveAs: '另存为',
+      setDefault: '设为默认', unsetDefault: '取消默认'
     },
     en: {
       allTasks: 'All Tasks', today: 'Today', tomorrow: 'Tomorrow', next7Days: 'Next 7 Days', calendar: 'Calendar',
       tags: 'Tags', activeProjects: 'Active Projects', workflows: 'Workflows', settings: 'Settings', language: 'Language',
       inbox: 'Inbox', nextActions: 'Next Actions', waitingFor: 'Waiting For', somedayMaybe: 'Someday/Maybe',
       searchPlaceholder: 'Search...', quickAddPlaceholder: 'Quick Add (N)...', batch: 'Batch Actions',
-      darkMode: 'Dark Mode', lightMode: 'Light Mode', deleteSelected: 'items deleted', saving: 'Saving...'
+      darkMode: 'Dark Mode', lightMode: 'Light Mode', deleteSelected: 'items deleted', saving: 'Saving...',
+      fileManagement: 'File Management', openFile: 'Open Local File', saveFile: 'Save Changes', saveAs: 'Save As...',
+      setDefault: 'Set as Default', unsetDefault: 'Unset Default'
     }
   }[lang]), [lang]);
 

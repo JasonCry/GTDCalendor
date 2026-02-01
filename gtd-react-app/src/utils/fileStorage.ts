@@ -38,6 +38,10 @@ export const getFileHandle = async () => {
 
 export const removeFileHandle = async () => {
   const db = await openDB();
-  const transaction = db.transaction(STORE_NAME, 'readwrite');
-  transaction.objectStore(STORE_NAME).delete(KEY_NAME);
+  return new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    transaction.objectStore(STORE_NAME).delete(KEY_NAME);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
 };
