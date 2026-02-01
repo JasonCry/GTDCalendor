@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { 
   CheckCircle2, Plus, Menu, ListTodo, ChevronLeft, Clock, Trash2, X, Calendar as CalendarIcon,
   Search, Sun, Moon, BarChart2, Layers, Settings, Languages, Pause, Play, Square, Inbox, Zap, Coffee, Hourglass, Hash,
-  ChevronDown, Info
+  ChevronDown, Info, FolderOpen, Save, Pin
 } from 'lucide-react';
 import { format as formatDt, addDays } from 'date-fns';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -11,6 +11,7 @@ import { twMerge } from 'tailwind-merge';
 
 import { useGtd } from './context/GtdContext';
 import { useGtdParser } from './hooks/useGtdParser';
+import { getFileHandle, saveFileHandle, removeFileHandle } from './utils/fileStorage';
 import TaskCard from './components/TaskCard';
 import ProjectItem from './components/ProjectItem';
 import Inspector from './components/Inspector';
@@ -32,9 +33,13 @@ const App: React.FC = () => {
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [isLanguageDropdownOpen, setIsLanguageDropdownOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({'📥 收件箱': true});
+  const [hasCurrentFile, setHasCurrentFile] = useState(false);
+  const [isDefaultFile, setIsDefaultFile] = useState(false);
 
   const mainInputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const pomoTimer = useRef<NodeJS.Timeout | null>(null);
   const currentFileHandle = useRef<any>(null);
@@ -42,6 +47,86 @@ const App: React.FC = () => {
   const { projects, allTasks } = useGtdParser(markdown, t);
 
   const selectedTask = useMemo(() => allTasks.find(t => t.id === selectedTaskId), [allTasks, selectedTaskId]);
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsLanguageDropdownOpen(false);
+      }
+    };
+    document.addEventListener('click', onDocClick);
+    return () => document.removeEventListener('click', onDocClick);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadDefault = async () => {
+      try {
+        const defaultHandle = await getFileHandle();
+        if (!defaultHandle || cancelled) return;
+        const file = await defaultHandle.getFile();
+        if (cancelled) return;
+        const text = await file.text();
+        if (cancelled) return;
+        setMarkdown(text);
+        localStorage.setItem('gtd-markdown', text);
+        currentFileHandle.current = defaultHandle;
+        setHasCurrentFile(true);
+        setIsDefaultFile(true);
+      } catch {
+        // Permission denied or no default file
+      }
+    };
+    loadDefault();
+    return () => { cancelled = true; };
+  }, []);
+
+  const loadFileContent = useCallback(async (handle: FileSystemFileHandle) => {
+    const file = await handle.getFile();
+    const text = await file.text();
+    setMarkdown(text);
+    localStorage.setItem('gtd-markdown', text);
+    currentFileHandle.current = handle;
+    setHasCurrentFile(true);
+    const defaultHandle = await getFileHandle();
+    setIsDefaultFile(!!defaultHandle && (await handle.isSameEntry(defaultHandle)));
+  }, []);
+
+  const handleOpenFile = useCallback(async () => {
+    try {
+      const [handle] = await window.showOpenFilePicker({ types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }], multiple: false });
+      await loadFileContent(handle);
+      addToast(lang === 'zh' ? '文件已打开' : 'File opened', 'success');
+    } catch (err) {
+      if ((err as Error)?.name !== 'AbortError') console.error(err);
+    }
+  }, [loadFileContent, addToast, lang]);
+
+  const handleSaveAs = useCallback(async () => {
+    try {
+      const handle = await window.showSaveFilePicker({ types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }] });
+      const writable = await handle.createWritable();
+      await writable.write(markdown);
+      await writable.close();
+      await loadFileContent(handle);
+      addToast(lang === 'zh' ? '另存为成功' : 'Saved as', 'success');
+    } catch (err) {
+      if ((err as Error)?.name !== 'AbortError') console.error(err);
+    }
+  }, [markdown, loadFileContent, addToast, lang]);
+
+  const toggleDefaultFile = useCallback(async () => {
+    if (!currentFileHandle.current) return;
+    if (isDefaultFile) {
+      await removeFileHandle();
+      setIsDefaultFile(false);
+      addToast(lang === 'zh' ? '已取消默认文件' : 'Unset default file', 'info');
+    } else {
+      await saveFileHandle(currentFileHandle.current);
+      setIsDefaultFile(true);
+      addToast(lang === 'zh' ? '已设为默认文件' : 'Set as default file', 'success');
+    }
+  }, [isDefaultFile, addToast, lang]);
 
   // --- File Actions ---
   const saveToFile = useCallback(async (content: string) => {
@@ -62,6 +147,15 @@ const App: React.FC = () => {
       saveToFile(content);
     }
   }, [saveToFile]);
+
+  const handleSaveFile = useCallback(async () => {
+    if (currentFileHandle.current) {
+      await saveToFile(markdown);
+      addToast(lang === 'zh' ? '保存成功' : 'Saved', 'success');
+    } else {
+      await handleSaveAs();
+    }
+  }, [markdown, saveToFile, handleSaveAs, addToast, lang]);
 
   const handleUpdateTask = useCallback((lineIndex: number, updates: Partial<Task>) => {
     const lines = markdown.split('\n');
@@ -312,11 +406,42 @@ const App: React.FC = () => {
         className="relative bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border-r border-slate-200/50 dark:border-slate-800/50 flex flex-col overflow-hidden z-20 shrink-0"
       >
         <div className="p-8 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3.5 group cursor-pointer" onClick={() => setIsLanguageDropdownOpen(!isLanguageDropdownOpen)}>
-            <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">
-              <CheckCircle2 size={22} className="text-white" strokeWidth={3} />
+          <div ref={dropdownRef} className="relative">
+            <div
+              className="flex items-center gap-3.5 group cursor-pointer p-2 -m-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all"
+              onClick={(e) => { e.stopPropagation(); setIsLanguageDropdownOpen(!isLanguageDropdownOpen); }}
+            >
+              <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">
+                <CheckCircle2 size={22} className="text-white" strokeWidth={3} />
+              </div>
+              <span className="font-black text-xl tracking-tight bg-gradient-to-br from-slate-900 to-slate-500 dark:from-white dark:to-slate-400 bg-clip-text text-transparent">GTD Flow</span>
+              <ChevronDown size={16} className="text-slate-400" />
             </div>
-            <span className="font-black text-xl tracking-tight bg-gradient-to-br from-slate-900 to-slate-500 dark:from-white dark:to-slate-400 bg-clip-text text-transparent">GTD Flow</span>
+            {isLanguageDropdownOpen && (
+              <div className="absolute left-0 mt-2 w-48 bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl shadow-xl z-50 py-2 animate-in fade-in zoom-in-95 duration-200">
+                <button
+                  onClick={() => { setLang(lang === 'zh' ? 'en' : 'zh'); setIsLanguageDropdownOpen(false); }}
+                  className="w-full text-left px-4 py-3 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3"
+                >
+                  <Languages size={18} className="text-slate-400" />
+                  {lang === 'zh' ? 'English' : '中文'}
+                </button>
+                <button
+                  onClick={() => { setIsDarkMode(!isDarkMode); setIsLanguageDropdownOpen(false); }}
+                  className="w-full text-left px-4 py-3 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3"
+                >
+                  {isDarkMode ? <Sun size={18} className="text-slate-400" /> : <Moon size={18} className="text-slate-400" />}
+                  {isDarkMode ? t.lightMode : t.darkMode}
+                </button>
+                <button
+                  onClick={() => { setIsSettingsOpen(true); setIsLanguageDropdownOpen(false); }}
+                  className="w-full text-left px-4 py-3 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3"
+                >
+                  <Settings size={18} className="text-slate-400" />
+                  {t.settings}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -478,6 +603,82 @@ const App: React.FC = () => {
             onToggleSubtask={handleToggleSubtask}
             translations={t}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Settings Modal */}
+      <AnimatePresence>
+        {isSettingsOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/60 dark:bg-slate-950/70 backdrop-blur-sm flex items-center justify-center z-[100] p-4"
+            onClick={() => setIsSettingsOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-slate-800 w-full max-w-md rounded-3xl shadow-2xl border border-slate-100 dark:border-slate-700 overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/30">
+                <h3 className="font-black text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                  <Settings size={20} className="text-blue-600" />
+                  {t.settings}
+                </h3>
+                <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-400 transition-all">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-8 space-y-8">
+                <section className="space-y-4">
+                  <h4 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">{t.fileManagement}</h4>
+                  <div className="grid grid-cols-1 gap-3">
+                    <button onClick={handleOpenFile} className="w-full p-4 flex items-center gap-4 rounded-2xl bg-slate-50 dark:bg-slate-900/50 text-slate-700 dark:text-slate-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-all border border-slate-100 dark:border-slate-700 group">
+                      <div className="p-2 rounded-xl bg-white dark:bg-slate-800 shadow-sm group-hover:bg-blue-100 dark:group-hover:bg-blue-900/50 transition-colors">
+                        <FolderOpen size={20} />
+                      </div>
+                      <span className="font-bold text-sm">{t.openFile}</span>
+                    </button>
+                    <button onClick={handleSaveFile} className="w-full p-4 flex items-center gap-4 rounded-2xl bg-slate-50 dark:bg-slate-900/50 text-slate-700 dark:text-slate-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-all border border-slate-100 dark:border-slate-700 group">
+                      <div className="p-2 rounded-xl bg-white dark:bg-slate-800 shadow-sm group-hover:bg-emerald-100 dark:group-hover:bg-emerald-900/50 transition-colors">
+                        <Save size={20} />
+                      </div>
+                      <span className="font-bold text-sm">{hasCurrentFile ? t.saveFile : t.saveAs}</span>
+                    </button>
+                    {hasCurrentFile && (
+                      <button onClick={toggleDefaultFile} className="w-full p-4 flex items-center gap-4 rounded-2xl bg-slate-50 dark:bg-slate-900/50 text-slate-700 dark:text-slate-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 transition-all border border-slate-100 dark:border-slate-700 group">
+                        <div className={cn("p-2 rounded-xl bg-white dark:bg-slate-800 shadow-sm transition-colors", isDefaultFile && "text-amber-500")}>
+                          <Pin size={20} className={isDefaultFile ? "fill-current" : ""} />
+                        </div>
+                        <span className="font-bold text-sm">{isDefaultFile ? t.unsetDefault : t.setDefault}</span>
+                      </button>
+                    )}
+                  </div>
+                </section>
+                <section className="space-y-4">
+                  <h4 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">{t.language}</h4>
+                  <div className="flex p-1 bg-slate-100 dark:bg-slate-900/50 rounded-2xl">
+                    <button onClick={() => setLang('zh')} className={cn("flex-1 py-3 text-sm font-bold rounded-xl transition-all", lang === 'zh' ? "bg-white dark:bg-slate-800 shadow-sm text-blue-600 dark:text-blue-400" : "text-slate-500")}>中文</button>
+                    <button onClick={() => setLang('en')} className={cn("flex-1 py-3 text-sm font-bold rounded-xl transition-all", lang === 'en' ? "bg-white dark:bg-slate-800 shadow-sm text-blue-600 dark:text-blue-400" : "text-slate-500")}>English</button>
+                  </div>
+                </section>
+                <section className="space-y-4">
+                  <h4 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">{t.darkMode}</h4>
+                  <div className="flex p-1 bg-slate-100 dark:bg-slate-900/50 rounded-2xl">
+                    <button onClick={() => setIsDarkMode(false)} className={cn("flex-1 py-3 text-sm font-bold rounded-xl transition-all flex items-center justify-center gap-2", !isDarkMode ? "bg-white dark:bg-slate-800 shadow-sm text-blue-600 dark:text-blue-400" : "text-slate-500")}>
+                      <Sun size={18} /> {t.lightMode}
+                    </button>
+                    <button onClick={() => setIsDarkMode(true)} className={cn("flex-1 py-3 text-sm font-bold rounded-xl transition-all flex items-center justify-center gap-2", isDarkMode ? "bg-white dark:bg-slate-800 shadow-sm text-blue-600 dark:text-blue-400" : "text-slate-500")}>
+                      <Moon size={18} /> {t.darkMode}
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
 
