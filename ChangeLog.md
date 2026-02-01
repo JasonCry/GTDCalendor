@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.9] - 2026-02-01
+
+### 💎 UI Overhaul & Master-Detail Layout
+A massive visual and structural transformation focused on information density and professional task management workflows.
+
+### ✨ Features
+- **3-Column Professional Layout**:
+  - **Master Sidebar**: Narrowed by 33% to maximize focus on tasks.
+  - **Compact Master List**: Redesigned task cards with significantly reduced height and padding, allowing 2-3x more tasks per screen.
+  - **Right-Side Detail Inspector**: New滑出式 (Slide-out) panel for in-depth task property management.
+- **Enhanced Task Detail Control**:
+  - Direct title editing within the inspector.
+  - Quick property toggles for Priority, Recurrence, Date, and Tags.
+  - Integrated subtask checklist progress and multi-line notes display.
+- **Interaction Polish**:
+  - Hover-triggered action buttons to keep the interface clean during browsing.
+  - Real-time auto-save integration within the Detail Inspector.
+
+### 🛠 Debugging & Stability Improvements
+Extensive cleanup after the major structural migration:
+- **Reference Fixes**: Restored missing `requestNotificationPermission`, `currentFileHandle`, and other critical state variables lost during refactoring.
+- **Drag & Drop Logic**: Fixed `onTaskDrop` and `onSubtaskDropOnZone` handlers to ensure reordering and subtask conversion work seamlessly in the new layout.
+- **Core Interactions**: 
+  - Fixed broken task checkbox regex (escaped `[` and `]` properly) to restore toggling functionality.
+  - Restored `addTask` (Quick Add) feature.
+  - Fixed Project management (Add/Delete project buttons) within the sidebar.
+- **Visual Accuracy**: Corrected the parser to prioritize indentation detection, fixing the bug where subtasks failed to render with proper horizontal offset.
+
 ## [0.0.8] - 2026-02-01
 
 ### 🍅 Focus & Bulk Management
