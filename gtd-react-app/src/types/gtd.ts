@@ -1,0 +1,41 @@
+export type Priority = 1 | 2 | 3 | null;
+export type Recurrence = 'day' | 'week' | 'month' | null;
+
+export interface Subtask {
+  content: string;
+  completed: boolean;
+  lineIndex: number;
+}
+
+export interface Task {
+  id: string;
+  lineIndex: number;
+  lineCount: number;
+  content: string;
+  completed: boolean;
+  date: string | null;
+  doneDate: string | null;
+  recurrence: Recurrence;
+  priority: Priority;
+  tags: string[];
+  projectPath: string;
+  notes: string[];
+  subtasks: Subtask[];
+}
+
+export interface ProjectNode {
+  name: string;
+  displayName: string;
+  children: ProjectNode[];
+  tasks: Task[];
+  level: number;
+  path: string;
+  incompleteCount: number;
+}
+
+export type ViewType = 'view' | 'calendar' | 'stats' | 'settings';
+
+export interface Filter {
+  type: 'all' | 'project' | 'time' | 'tag';
+  value: string;
+}

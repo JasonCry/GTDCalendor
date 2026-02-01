@@ -1,6 +1,6 @@
 <script setup>
 import { 
-  CheckCircle2, Layout, FileText, Plus, Menu, Inbox, Hash, Zap, Coffee, Hourglass, 
+  CheckCircle2, Circle, Layout, FileText, Plus, Menu, Inbox, Hash, Zap, Coffee, Hourglass, 
   ListTodo, Info, ChevronLeft, ChevronRight, ChevronDown, CalendarDays, Clock, Trash2, X, Calendar,
   FolderOpen, Save, RefreshCw, Pin, Search, Eye, EyeOff, Tag, Languages, Settings, Sun, Moon, BarChart2,
   CornerDownRight, Repeat, Cloud, CloudOff, AlertTriangle, Bell, BellRing,
@@ -684,7 +684,9 @@ const handleMakeSubtask = (sourceIdx, targetIdx) => {
     if (line.trim().startsWith('#') || (line.startsWith('- [') && !line.startsWith(' ') && !line.startsWith('\t'))) break;
     insertionPoint++;
   }
-  const indentedLines = taskLines.map(l => '  ' + l.trimStart());
+  const indentedLines = taskLines.map(l => {
+    return '  ' + l.trimStart().replace(/\s*@\d{4}-\d{2}-\d{2}(~\d{4}-\d{2}-\d{2})?(\s\d{2}:\d{2}(~\d{2}:\d{2})?)?/, '');
+  });
   lines.splice(insertionPoint, 0, ...indentedLines);
   markdown.value = lines.join('\n');
   addToast(lang.value === 'zh' ? '已成功建立子任务并缩进' : 'Subtask created', 'success');
@@ -776,7 +778,15 @@ const parsedData = computed(() => {
       parent.children.push(node); stack.push(node);
     } else if (currentTask && (line.startsWith('  ') || line.startsWith('\t'))) {
       if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]')) {
-        currentTask.subtasks.push({ content: trimmed.replace(/^- \[[ x]\]\s*/, '').trim(), completed: trimmed.startsWith('- [x]'), lineIndex: index });
+        const cleanContent = trimmed
+          .replace(/^- \[[ x]\]\s*/, '')
+          .replace(/@\d{4}-\d{2}-\d{2}(~\d{4}-\d{2}-\d{2})?(\s\d{2}:\d{2}(~\d{2}:\d{2})?)?/, '')
+          .replace(/@done\(\d{4}-\d{2}-\d{2}\)/, '')
+          .replace(/@every\((day|week|month)\)/, '')
+          .replace(/![1-3]/, '')
+          .replace(/#[^\s#]+/g, '')
+          .trim();
+        currentTask.subtasks.push({ content: cleanContent, completed: trimmed.startsWith('- [x]'), lineIndex: index });
       } else currentTask.notes.push(trimmed);
       currentTask.lineCount++;
     } else if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]')) {
@@ -1045,7 +1055,7 @@ const handleSaveFile = async () => {
                <Cloud v-else :size="12" />
                <span class="text-[9px] font-black uppercase tracking-tighter">{{ syncStatus === 'syncing' ? t.syncing : syncStatus === 'conflict' ? 'Conflict' : syncStatus === 'error' ? 'Error' : 'Synced' }}</span>
             </div>
-            <div class="px-2 py-1 rounded text-[10px] font-bold border" :class="isSaving ? 'text-amber-500 bg-amber-50 border-amber-100' : 'text-emerald-500 bg-emerald-50 border-emerald-100'">{{ isSaving ? t.saving : 'V0.0.9' }}</div>
+            <div class="px-2 py-1 rounded text-[10px] font-bold border" :class="isSaving ? 'text-amber-500 bg-amber-50 border-amber-100' : 'text-emerald-500 bg-emerald-50 border-emerald-100'">{{ isSaving ? t.saving : 'V0.2.0' }}</div>
          </div>
       </div>
       
