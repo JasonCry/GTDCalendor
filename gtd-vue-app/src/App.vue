@@ -96,6 +96,125 @@ const quickAddDate = ref(null);
 const searchInputRef = ref(null);
 const mainInputRef = ref(null);
 
+// --- Pomodoro State ---
+const pomoState = ref({
+  isActive: false,
+  timeLeft: 25 * 60,
+  mode: 'work', // 'work', 'break'
+  totalSeconds: 25 * 60
+});
+
+let pomoTimer = null;
+
+const startPomo = () => {
+  if (pomoTimer) return;
+  
+  // If timer finished, reset it before starting
+  if (pomoState.value.timeLeft <= 0) {
+    pomoState.value.timeLeft = pomoState.value.mode === 'work' ? 25 * 60 : 5 * 60;
+  }
+
+  pomoState.value.isActive = true;
+  console.log('Pomodoro Started:', pomoState.value.mode, pomoState.value.timeLeft);
+
+  pomoTimer = setInterval(() => {
+    if (pomoState.value.timeLeft > 0) {
+      pomoState.value.timeLeft--;
+    } else {
+      console.log('Pomodoro Finished');
+      stopPomo();
+      const msg = pomoState.value.mode === 'work' ? '专注结束，休息一下吧！' : '休息结束，开始专注！';
+      addToast(msg, 'success');
+      
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('番茄钟 | GTD Flow', { body: msg });
+      }
+      togglePomoMode();
+    }
+  }, 1000);
+};
+
+const stopPomo = () => {
+  console.log('Pomodoro Stopped');
+  if (pomoTimer) {
+    clearInterval(pomoTimer);
+    pomoTimer = null;
+  }
+  pomoState.value.isActive = false;
+};
+
+const resetPomo = () => {
+  stopPomo();
+  pomoState.value.mode = 'work';
+  pomoState.value.timeLeft = 25 * 60;
+  pomoState.value.totalSeconds = 25 * 60;
+  addToast('番茄钟已重置', 'info');
+};
+
+const togglePomoMode = () => {
+  const wasActive = pomoState.value.isActive;
+  stopPomo(); 
+  pomoState.value.mode = pomoState.value.mode === 'work' ? 'break' : 'work';
+  pomoState.value.timeLeft = pomoState.value.mode === 'work' ? 25 * 60 : 5 * 60;
+  pomoState.value.totalSeconds = pomoState.value.timeLeft;
+  if (wasActive) startPomo(); // Auto-start next mode if it was running
+};
+
+const formatPomoTime = (seconds) => {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+};
+
+// --- Batch Operations State ---
+const isBatchMode = ref(false);
+const selectedTaskIds = ref(new Set());
+
+const toggleTaskSelection = (id) => {
+  if (selectedTaskIds.value.has(id)) {
+    selectedTaskIds.value.delete(id);
+  } else {
+    selectedTaskIds.value.add(id);
+  }
+};
+
+const handleBatchDelete = () => {
+  if (!confirm(`确定要批量删除这 ${selectedTaskIds.value.size} 个任务吗？`)) return;
+  const lines = markdown.value.split('\n');
+  const idsToRemove = Array.from(selectedTaskIds.value);
+  
+  // Sort indices descending to avoid shift
+  const indices = idsToRemove.map(id => {
+    return allTasks.value.find(t => t.id === id)?.lineIndex;
+  }).filter(idx => idx !== undefined).sort((a, b) => b - a);
+
+  indices.forEach(idx => lines.splice(idx, 1));
+  markdown.value = lines.join('\n');
+  selectedTaskIds.value.clear();
+  isBatchMode.value = false;
+  addToast('批量删除成功', 'info');
+};
+
+const handleBatchMove = (targetPath) => {
+  Array.from(selectedTaskIds.value).forEach(id => {
+    const task = allTasks.value.find(t => t.id === id);
+    if (task) handleMoveTaskToProject(task.lineIndex, targetPath);
+  });
+  selectedTaskIds.value.clear();
+  isBatchMode.value = false;
+  addToast('批量迁移成功', 'success');
+};
+
+const handleBatchSetDate = (newDate) => {
+  Array.from(selectedTaskIds.value).forEach(id => {
+    const task = allTasks.value.find(t => t.id === id);
+    if (task) handleUpdateTask(task.lineIndex, { date: newDate });
+  });
+  selectedTaskIds.value.clear();
+  isBatchMode.value = false;
+  addToast('批量设置日期成功', 'success');
+};
+
 const toggleSidebar = () => {
   sidebarOpen.value = !sidebarOpen.value;
   localStorage.setItem('gtd-sidebar-open', sidebarOpen.value);
@@ -129,6 +248,13 @@ const handleGlobalKeydown = (e) => {
   // 3. S: Toggle Sidebar
   if (e.key === 's' || e.key === 'S') {
     toggleSidebar();
+  }
+
+  // 4. B: Toggle Batch Mode
+  if (e.key === 'b' || e.key === 'B') {
+    isBatchMode.value = !isBatchMode.value;
+    selectedTaskIds.value.clear();
+    addToast(isBatchMode.value ? '已开启批量模式' : '已关闭批量模式', 'info');
   }
 };
 
@@ -217,7 +343,19 @@ const t = computed(() => {
       cloudSync: 'iCloud 自动同步',
       shortcuts: '快捷键',
       quickSearch: '全局搜索',
-      newTodo: '新建任务'
+      newTodo: '新建任务',
+      pomodoro: '番茄钟',
+      work: '专注',
+      break: '休息',
+      start: '开始',
+      stop: '停止',
+      batch: '批量操作',
+      selected: '项已选择',
+      deleteSelected: '删除选中',
+      moveSelected: '迁移到...',
+      setDate: '设置日期',
+      swipeRightDone: '右滑完成',
+      swipeLeftDelete: '左滑删除'
     },
     en: {
       allTasks: 'All Tasks',
@@ -274,7 +412,19 @@ const t = computed(() => {
       cloudSync: 'iCloud Auto-Sync',
       shortcuts: 'Shortcuts',
       quickSearch: 'Quick Search',
-      newTodo: 'New Todo'
+      newTodo: 'New Todo',
+      pomodoro: 'Pomodoro',
+      work: 'Focus',
+      break: 'Break',
+      start: 'Start',
+      stop: 'Stop',
+      batch: 'Batch Actions',
+      selected: 'items selected',
+      deleteSelected: 'Delete Selected',
+      moveSelected: 'Move to...',
+      setDate: 'Set Date',
+      swipeRightDone: 'Swipe Right: Done',
+      swipeLeftDelete: 'Swipe Left: Delete'
     }
   };
   return translations[lang.value];
@@ -1800,32 +1950,100 @@ const onDrop = (e, dayDate) => {
         </div>
 
         <!-- List View -->
-        <div v-if="activeView === 'view'" class="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4 max-w-3xl mx-auto w-full">
-            <div class="flex items-center gap-3 mb-6 sm:mb-8">
-               <div class="p-3 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-100 dark:shadow-blue-900/20">
-                  <ListTodo v-if="selectedFilter.type === 'all'" :size="24"/>
-                  <Sun v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'today'" :size="24"/>
-                  <Calendar v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow'" :size="24"/>
-                  <CalendarDays v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'week'" :size="24"/>
-                  <component v-else :is="getGTDIcon(selectedFilter.value)" :size="24"/>
+        <div v-if="activeView === 'view'" class="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4 max-w-3xl mx-auto w-full relative">
+            <div class="flex items-center justify-between mb-6 sm:mb-8">
+               <div class="flex items-center gap-3">
+                  <div class="p-3 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-100 dark:shadow-blue-900/20">
+                      <ListTodo v-if="selectedFilter.type === 'all'" :size="24"/>
+                      <Sun v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'today'" :size="24"/>
+                      <Calendar v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow'" :size="24"/>
+                      <CalendarDays v-else-if="selectedFilter.type === 'time' && selectedFilter.value === 'week'" :size="24"/>
+                      <component v-else :is="getGTDIcon(selectedFilter.value)" :size="24"/>
+                  </div>
+                  <div>
+                      <h1 class="text-xl sm:text-2xl font-black text-slate-800 dark:text-slate-100 tracking-tight">
+                        {{ getHeaderTitle }}
+                      </h1>
+                      <p class="text-xs text-slate-400 dark:text-slate-500 font-medium">
+                        <template v-if="selectedTag">
+                          {{ t.tags }} "#{{ selectedTag }}" : {{ filteredTasks.length }}
+                        </template>
+                        <template v-else-if="selectedFilter?.type === 'all' || selectedFilter?.type === 'time'">
+                          {{ (filteredTasks || []).length }} {{ t.allTasks }}
+                        </template>
+                        <template v-else-if="selectedFilter">
+                          {{ t.todayTitle }}: {{ (allTasks || []).filter(t => t.projectPath && t.projectPath.startsWith(selectedFilter.value) && !t.completed).length }} / 
+                          {{ t.allTasks }}: {{ (allTasks || []).filter(t => t.projectPath && t.projectPath.startsWith(selectedFilter.value)).length }}
+                        </template>
+                      </p>
+                  </div>
                </div>
-               <div>
-                  <h1 class="text-xl sm:text-2xl font-black text-slate-800 dark:text-slate-100 tracking-tight">
-                    {{ getHeaderTitle }}
-                  </h1>
-                  <p class="text-xs text-slate-400 dark:text-slate-500 font-medium">
-                    <template v-if="selectedTag">
-                      {{ t.tags }} "#{{ selectedTag }}" : {{ filteredTasks.length }}
-                    </template>
-                    <template v-else-if="selectedFilter?.type === 'all' || selectedFilter?.type === 'time'">
-                      {{ (filteredTasks || []).length }} {{ t.allTasks }}
-                    </template>
-                    <template v-else-if="selectedFilter">
-                      {{ t.todayTitle }}: {{ (allTasks || []).filter(t => t.projectPath && t.projectPath.startsWith(selectedFilter.value) && !t.completed).length }} / 
-                      {{ t.allTasks }}: {{ (allTasks || []).filter(t => t.projectPath && t.projectPath.startsWith(selectedFilter.value)).length }}
-                    </template>
-                  </p>
+
+               <div class="flex items-center gap-2">
+                  <!-- Pomodoro Widget (Redesigned for visibility) -->
+                  <div class="flex items-center gap-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-1 pl-4 rounded-2xl shadow-sm">
+                      <!-- Timer Display -->
+                      <div class="flex items-center gap-2.5 cursor-pointer group" @click="togglePomoMode" title="点击切换 专注/休息">
+                          <div class="w-2.5 h-2.5 rounded-full transition-all" 
+                               :class="[
+                                 pomoState.mode === 'work' ? 'bg-red-500' : 'bg-emerald-500', 
+                                 pomoState.isActive ? 'animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.4)]' : ''
+                               ]"></div>
+                          <span class="text-base font-mono font-black text-slate-700 dark:text-slate-200 tracking-tight">{{ formatPomoTime(pomoState.timeLeft) }}</span>
+                      </div>
+                      
+                      <!-- Divider -->
+                      <div class="h-6 w-[1px] bg-slate-100 dark:bg-slate-700"></div>
+
+                      <!-- Control Buttons -->
+                      <div class="flex items-center gap-1">
+                          <button @click="pomoState.isActive ? stopPomo() : startPomo()" 
+                                  class="w-10 h-10 rounded-xl transition-all flex items-center justify-center group/btn"
+                                  :class="pomoState.isActive 
+                                    ? 'text-amber-500 bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-500 hover:text-white' 
+                                    : 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-500 hover:text-white'">
+                              <Pause v-if="pomoState.isActive" :size="20" class="fill-current"/>
+                              <Play v-else :size="20" class="fill-current ml-0.5"/>
+                          </button>
+                          
+                          <button v-if="pomoState.isActive || pomoState.timeLeft !== pomoState.totalSeconds" 
+                                  @click="resetPomo"
+                                  class="w-10 h-10 rounded-xl text-slate-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-500 transition-all flex items-center justify-center">
+                              <Square :size="18" class="fill-current"/>
+                          </button>
+                      </div>
+                  </div>
+
+                  <!-- Batch Mode Toggle -->
+                  <button @click="isBatchMode = !isBatchMode; selectedTaskIds.clear()" 
+                          class="px-3 py-2 rounded-xl border transition-all flex items-center gap-2"
+                          :class="isBatchMode ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-200' : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-400 hover:text-blue-600'">
+                      <Layers :size="16"/>
+                      <span class="text-xs font-bold">{{ t.batch }}</span>
+                  </button>
                </div>
+            </div>
+
+            <!-- Batch Action Bar (Floating) -->
+            <div v-if="isBatchMode && selectedTaskIds.size > 0" 
+                 class="fixed bottom-24 left-1/2 -translate-x-1/2 z-[150] bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-6 py-4 rounded-3xl shadow-2xl flex items-center gap-6 animate-in slide-in-from-bottom-10 duration-300">
+                <div class="flex flex-col">
+                    <span class="text-[10px] font-black uppercase tracking-widest text-slate-400">BATCH MODE</span>
+                    <span class="text-sm font-bold">{{ selectedTaskIds.size }} {{ t.selected }}</span>
+                </div>
+                <div class="h-8 w-[1px] bg-slate-700 dark:bg-slate-200"></div>
+                <div class="flex items-center gap-2">
+                    <button @click="handleBatchDelete" class="p-2 hover:bg-red-500 hover:text-white rounded-xl transition-all flex items-center gap-2 text-xs font-bold">
+                        <Trash2 :size="16"/> {{ t.deleteSelected }}
+                    </button>
+                    <!-- Project Selector Dropdown could be added here -->
+                    <button @click="handleBatchSetDate(getToday())" class="p-2 hover:bg-blue-500 hover:text-white rounded-xl transition-all flex items-center gap-2 text-xs font-bold">
+                        <CalendarAction :size="16"/> {{ t.setDate }} (今)
+                    </button>
+                </div>
+                <button @click="selectedTaskIds.clear(); isBatchMode = false" class="ml-4 p-1 hover:bg-white/10 dark:hover:bg-slate-100 rounded-full">
+                    <X :size="18"/>
+                </button>
             </div>
 
             <div class="relative group mb-6 sm:mb-8">
@@ -1854,16 +2072,20 @@ const onDrop = (e, dayDate) => {
                     @drop="onTaskDrop($event, t.lineIndex)"
                     class="transition-all duration-200"
                   >
-                    <TaskCard 
-                      :task="t" 
-                      @toggle="handleToggle" 
-                      @toggle-subtask="handleToggleSubtask"
-                      @make-subtask="handleMakeSubtask"
-                      @delete="handleDeleteTask" 
-                      @update="handleUpdateTask"
-                      @convert-to-project="handleConvertTaskToProject"
-                      @dragstart="onDragStart"
-                    />
+                                      <TaskCard 
+                                        :task="t" 
+                                        :is-batch-mode="isBatchMode"
+                                        :selected="selectedTaskIds.has(t.id)"
+                                        @select-task="toggleTaskSelection"
+                                        @toggle="handleToggle" 
+                                        @toggle-subtask="handleToggleSubtask"
+                                        @make-subtask="handleMakeSubtask"
+                                        @delete="handleDeleteTask" 
+                                        @update="handleUpdateTask"
+                                        @convert-to-project="handleConvertTaskToProject"
+                                        @dragstart="onDragStart"
+                                      />
+                    
                   </div>
 
                   <!-- Subtask Indent Drop Zone -->

@@ -1,18 +1,19 @@
 <script setup>
-import {
+import { 
   CheckCircle2, Circle, Trash2, Clock, ChevronDown, ChevronRight, ChevronUp, Tag, 
   Edit3, Check, X as CloseIcon, AlertCircle, ListTodo, Calendar, CornerDownRight,
-  AlertTriangle
+  AlertTriangle, Square, CheckSquare
 } from 'lucide-vue-next';
 import { ref, watch, nextTick, computed } from 'vue';
 import { isBefore, parseISO, isValid } from 'date-fns';
 
 const props = defineProps({
-  task: { type: Object, required: true }
+  task: { type: Object, required: true },
+  isBatchMode: { type: Boolean, default: false },
+  selected: { type: Boolean, default: false }
 });
 
-const emit = defineEmits(['toggle', 'toggle-subtask', 'make-subtask', 'delete', 'update', 'convert-to-project', 'dragstart']);
-
+const emit = defineEmits(['toggle', 'toggle-subtask', 'make-subtask', 'delete', 'update', 'convert-to-project', 'dragstart', 'select-task']);
 const showNotes = ref(false);
 const isEditing = ref(false);
 const isSubtaskDropTarget = ref(false);
@@ -130,15 +131,26 @@ const getPriorityColor = (prio) => {
 <template>
   <div 
     class="flex flex-col p-4 bg-white dark:bg-slate-800 border rounded-3xl transition-all shadow-sm group cursor-grab active:cursor-grabbing"
-    :class="task.completed ? 'border-slate-100 dark:border-slate-700 opacity-60' : 'border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-500 hover:shadow-md'"
+    :class="[
+      task.completed ? 'border-slate-100 dark:border-slate-700 opacity-60' : 'border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-500 hover:shadow-md',
+      selected ? 'border-blue-500 ring-2 ring-blue-500/20' : ''
+    ]"
     draggable="true"
     @dragstart="emit('dragstart', $event, task)"
   >
     <div v-if="!isEditing" class="flex items-start gap-3">
-      <button 
-        @click.stop="emit('toggle', task.lineIndex, task.completed)" 
-        class="mt-1 transition-all shrink-0"
-        :class="task.completed ? 'text-emerald-500 dark:text-emerald-400' : 'text-slate-200 dark:text-slate-600 hover:text-blue-500 hover:scale-110 active:scale-90'"
+      <!-- Batch Select Checkbox -->
+      <button v-if="isBatchMode" 
+              @click.stop="emit('select-task', task.id)"
+              class="mt-1 transition-all shrink-0 text-blue-600 dark:text-blue-400">
+        <CheckSquare v-if="selected" :size="20" class="fill-current/10"/>
+        <Square v-else :size="20"/>
+      </button>
+
+      <button v-else
+              @click.stop="emit('toggle', task.lineIndex, task.completed)" 
+              class="mt-1 transition-all shrink-0"
+              :class="task.completed ? 'text-emerald-500 dark:text-emerald-400' : 'text-slate-200 dark:text-slate-600 hover:text-blue-500 hover:scale-110 active:scale-90'"
       >
         <CheckCircle2 v-if="task.completed" :size="20"/>
         <Circle v-else :size="20"/>
