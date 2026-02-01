@@ -1492,7 +1492,7 @@ const onDrop = (e, dayDate) => {
             </div>
 
             <div class="px-2 py-1 rounded text-[10px] font-bold border" :class="isSaving ? 'text-amber-500 bg-amber-50 border-amber-100' : 'text-emerald-500 bg-emerald-50 border-emerald-100'">
-               {{ isSaving ? t.saving : 'V0.0.7' }}
+               {{ isSaving ? t.saving : 'V0.0.8' }}
             </div>
          </div>
       </div>

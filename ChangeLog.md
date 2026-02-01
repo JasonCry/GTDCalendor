@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.8] - 2026-02-01
+
+### 🍅 Focus & Bulk Management
+This release introduces core execution tools and powerful bulk manipulation features to streamline the GTD workflow.
+
+### ✨ Features
+- **Pomodoro Timer**:
+  - Fully redesigned, high-visibility "Capsule" UI.
+  - One-click mode switching (Focus/Break) by clicking the timer.
+  - Automated system notifications and toast alerts upon session completion.
+  - Glowing breathing effect for active timers.
+- **Batch Operations**:
+  - Multi-select mode enabled via the "Batch" button or `B` key.
+  - Floating action bar for bulk deletion and bulk due-date setting.
+  - Visual selection feedback with specialized card styling.
+- **Enhanced UI Polish**:
+  - Integrated `TransitionGroup` for smooth task entry, removal, and reordering animations.
+  - Refined "Drag to Indent" subtask interaction with non-jittering indicators.
+  - Version indicator updated to V0.0.8.
+
 ## [0.0.7] - 2026-01-31
 
 ### 💎 Full Experience & Cloud Synchronization
