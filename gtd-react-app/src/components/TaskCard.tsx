@@ -52,17 +52,17 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
   return (
     <div 
       className={cn(
-        "task-card-root group relative flex flex-col bg-white dark:bg-slate-800 border rounded-2xl transition-all duration-300 mb-1.5 shadow-sm overflow-hidden",
+        "task-card-root group relative flex flex-col bg-white dark:bg-slate-800 border rounded-xl transition-all duration-300 mb-1 shadow-sm overflow-hidden",
         task.completed ? "opacity-50" : "border-slate-200 dark:border-slate-700",
         isActive && "border-blue-500 ring-4 ring-blue-500/10",
         selected && "border-blue-500 ring-2 ring-blue-500/20"
       )}
       onClick={() => onOpenDetail(task)}
     >
-      <div className="flex min-h-[48px]">
-        {/* 🚀 暴力高对比度手柄区 - 亮蓝色背景 */}
+      <div className="flex min-h-[40px]">
+        {/* 拖拽抓手：与卡片同色系，悬停略深 */}
         <div 
-          className="w-10 flex items-center justify-center bg-blue-600 dark:bg-blue-500 cursor-grab active:cursor-grabbing text-white shrink-0 shadow-inner"
+          className="w-7 flex items-center justify-center rounded-l-xl cursor-grab active:cursor-grabbing shrink-0 bg-slate-100 dark:bg-slate-700/80 text-slate-500 dark:text-slate-400 hover:bg-slate-200 hover:text-slate-600 dark:hover:bg-slate-600 dark:hover:text-slate-300 transition-colors"
           draggable
           onDragStart={(e) => {
              e.stopPropagation();
@@ -71,48 +71,48 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
              onDragStart(e, task);
           }}
         >
-          <GripVertical size={20} strokeWidth={3} />
+          <GripVertical size={14} strokeWidth={2.5} />
         </div>
 
-        <div className="flex-1 p-3 flex items-center gap-3">
+        <div className="flex-1 px-2.5 py-2 flex items-center gap-2">
           {isBatchMode ? (
             <button onClick={(e) => { e.stopPropagation(); onSelect(task.id); }} className="shrink-0 text-blue-500">
-              {selected ? <CheckSquare size={19} className="fill-current/10" /> : <Square size={19} className="opacity-40" />}
+              {selected ? <CheckSquare size={17} className="fill-current/10" /> : <Square size={17} className="opacity-40" />}
             </button>
           ) : (
             <button 
               onClick={(e) => { e.stopPropagation(); onToggle(task.lineIndex, task.completed); }} 
-              className={cn("shrink-0 transition-all", task.completed ? "text-emerald-500" : "text-slate-300 dark:text-slate-600 hover:text-blue-500")}
+              className={cn("shrink-0 transition-all", task.completed ? "text-emerald-600 dark:text-emerald-400" : "text-slate-500 dark:text-slate-400 hover:text-blue-500 dark:hover:text-blue-400")}
             >
-              {task.completed ? <CheckCircle2 size={19} strokeWidth={2.5} /> : <Circle size={19} strokeWidth={2.5} />}
+              {task.completed ? <CheckCircle2 size={17} strokeWidth={2.5} /> : <Circle size={17} strokeWidth={2.5} />}
             </button>
           )}
 
-          <div className="flex-1 flex items-center gap-2.5 min-w-0">
+          <div className="flex-1 flex items-center gap-2 min-w-0">
             {task.priority && (
               <span className={cn("text-[10px] font-black px-1.5 py-0.5 rounded-md border shrink-0", priorityStyle)}>
                 P{task.priority}
               </span>
             )}
             <h4 className={cn(
-              "font-bold text-[14px] truncate leading-snug flex-1",
+              "font-bold text-[13px] truncate leading-snug flex-1",
               task.completed ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"
             )}>
               {task.content}
             </h4>
             <div className="flex items-center gap-2 shrink-0 ml-auto">
               {task.date && (
-                <div className={cn("text-[10px] font-bold flex items-center gap-1 px-1.5 py-0.5 rounded-md", isOverdue ? "text-rose-500 bg-rose-50 dark:bg-rose-500/10" : "text-blue-500/80 bg-blue-50/50 dark:bg-blue-500/10")}>
-                  <Clock size={11} />
+                <div className={cn("text-[10px] font-bold flex items-center gap-1 px-1 py-0.5 rounded", isOverdue ? "text-rose-500 bg-rose-50 dark:bg-rose-500/10" : "text-blue-500/80 bg-blue-50/50 dark:bg-blue-500/10")}>
+                  <Clock size={10} />
                   <span>{task.date.split(' ')[0].split('-').slice(1).join('/')}</span>
                 </div>
               )}
               <button
                 onClick={(e) => { e.stopPropagation(); onDelete(task.lineIndex); }}
-                className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors opacity-0 group-hover:opacity-100"
+                className="p-1 rounded-lg text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors opacity-0 group-hover:opacity-100"
                 title="删除任务"
               >
-                <Trash2 size={14} strokeWidth={2.5} />
+                <Trash2 size={13} strokeWidth={2.5} />
               </button>
             </div>
           </div>
@@ -121,27 +121,26 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
 
       {/* Subtasks Section */}
       {task.subtasks && task.subtasks.length > 0 && (
-        <div className="ml-10 border-l-2 border-slate-100 dark:border-slate-700">
+        <div className="ml-7 border-l-2 border-slate-100 dark:border-slate-700">
           {task.subtasks.map((sub) => (
-            <div key={sub.lineIndex} className="flex border-t border-slate-100 dark:border-slate-700/50">
-              {/* 🔵 子任务暴力手柄 - 深蓝色区域 */}
+            <div key={sub.lineIndex} className="flex min-h-[36px] border-t border-slate-100 dark:border-slate-700/50">
               <div 
-                className="w-10 flex items-center justify-center bg-blue-100 dark:bg-blue-900/30 cursor-grab active:cursor-grabbing text-blue-600 dark:text-blue-400 shrink-0"
+                className="w-7 flex items-center justify-center cursor-grab active:cursor-grabbing shrink-0 text-slate-400 dark:text-slate-500 bg-slate-50/80 dark:bg-slate-800/50 hover:bg-slate-200 hover:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-400 transition-colors"
                 draggable
                 onDragStart={(e) => {
                   e.stopPropagation();
                   onDragStart(e, { ...task, lineIndex: sub.lineIndex, content: sub.content, lineCount: 1, isSubtask: true } as any);
                 }}
               >
-                <GripVertical size={16} />
+                <GripVertical size={12} strokeWidth={2.5} />
               </div>
 
-              <div className="flex-1 flex items-center gap-3 p-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group/sub">
+              <div className="flex-1 flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group/sub">
                 <button 
                   onClick={(e) => { e.stopPropagation(); onToggle(sub.lineIndex, sub.completed); }}
-                  className={cn("shrink-0", sub.completed ? "text-emerald-500/60" : "text-slate-300 dark:text-slate-600")}
+                  className={cn("shrink-0 transition-all", sub.completed ? "text-emerald-600 dark:text-emerald-400" : "text-slate-500 dark:text-slate-400 hover:text-blue-500/80")}
                 >
-                  {sub.completed ? <CheckCircle2 size={15} /> : <Circle size={15} />}
+                  {sub.completed ? <CheckCircle2 size={14} /> : <Circle size={14} strokeWidth={2.5} />}
                 </button>
                 <span className={cn("text-[12px] font-medium flex-1", sub.completed ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-300")}>
                   {sub.content}

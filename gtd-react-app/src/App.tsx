@@ -34,6 +34,7 @@ const App: React.FC = () => {
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [isLanguageDropdownOpen, setIsLanguageDropdownOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [searchExpanded, setSearchExpanded] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({'📥 收件箱': true});
   const [projectGroups, setProjectGroups] = useState<ProjectGroup[]>(() => {
     try {
@@ -52,10 +53,50 @@ const App: React.FC = () => {
   const mainInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const pomoTimer = useRef<NodeJS.Timeout | null>(null);
+  const pomoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentFileHandle = useRef<any>(null);
 
   const { projects, allTasks } = useGtdParser(markdown, t);
+
+  const formatPomoTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+
+  const startPomo = useCallback(() => {
+    setPomoState(prev => {
+      if (prev.isActive) return prev;
+      const timeLeft = prev.timeLeft <= 0
+        ? (prev.mode === 'work' ? 25 * 60 : 5 * 60)
+        : prev.timeLeft;
+      return { ...prev, isActive: true, timeLeft };
+    });
+  }, [setPomoState]);
+
+  const stopPomo = useCallback(() => {
+    if (pomoIntervalRef.current) {
+      clearInterval(pomoIntervalRef.current);
+      pomoIntervalRef.current = null;
+    }
+    setPomoState(prev => ({ ...prev, isActive: false }));
+  }, [setPomoState]);
+
+  const resetPomo = useCallback(() => {
+    if (pomoIntervalRef.current) {
+      clearInterval(pomoIntervalRef.current);
+      pomoIntervalRef.current = null;
+    }
+    const defaultWork = 25 * 60;
+    const defaultBreak = 5 * 60;
+    setPomoState(prev => ({
+      ...prev,
+      isActive: false,
+      timeLeft: prev.mode === 'work' ? defaultWork : defaultBreak,
+      totalSeconds: prev.mode === 'work' ? defaultWork : defaultBreak
+    }));
+    addToast(lang === 'zh' ? '番茄钟已重置' : 'Pomodoro reset', 'info');
+  }, [setPomoState, addToast, lang]);
 
   const selectedTask = useMemo(() => allTasks.find(t => t.id === selectedTaskId), [allTasks, selectedTaskId]);
 
@@ -68,6 +109,36 @@ const App: React.FC = () => {
     document.addEventListener('click', onDocClick);
     return () => document.removeEventListener('click', onDocClick);
   }, []);
+
+  useEffect(() => {
+    if (!pomoState.isActive) return;
+    pomoIntervalRef.current = setInterval(() => {
+      setPomoState(prev => {
+        if (prev.timeLeft <= 0) return prev;
+        if (prev.timeLeft === 1) {
+          const nextMode = prev.mode === 'work' ? 'break' : 'work';
+          const nextTotal = nextMode === 'work' ? 25 * 60 : 5 * 60;
+          const msg = prev.mode === 'work'
+            ? (lang === 'zh' ? '专注结束，休息一下吧！' : 'Focus done. Take a break!')
+            : (lang === 'zh' ? '休息结束，开始专注！' : 'Break over. Back to focus!');
+          setTimeout(() => addToast(msg, 'info'), 0);
+          try {
+            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+              new Notification(lang === 'zh' ? '番茄钟 | GTD Flow' : 'Pomodoro | GTD Flow', { body: msg });
+            }
+          } catch (_) {}
+          return { ...prev, timeLeft: nextTotal, totalSeconds: nextTotal, mode: nextMode, isActive: false };
+        }
+        return { ...prev, timeLeft: prev.timeLeft - 1 };
+      });
+    }, 1000);
+    return () => {
+      if (pomoIntervalRef.current) {
+        clearInterval(pomoIntervalRef.current);
+        pomoIntervalRef.current = null;
+      }
+    };
+  }, [pomoState.isActive, setPomoState, addToast, lang]);
 
   useEffect(() => {
     localStorage.setItem('gtd-project-groups', JSON.stringify(projectGroups));
@@ -222,6 +293,90 @@ const App: React.FC = () => {
     handleToggle(subIdx, status);
   };
 
+  /** 从输入中解析自然语言时间（早上9点、下午2:00 等），返回 HH:mm 及剥离后的文本 */
+  const parseNaturalLanguageTime = (input: string): { time: string; rest: string } | null => {
+    let rest = input.trim();
+    const pad = (n: number) => String(n).padStart(2, '0');
+
+    // 中午 -> 12:00
+    const noon = rest.match(/(.+)?中午(.+)?/);
+    if (noon) {
+      rest = [noon[1] ?? '', noon[2] ?? ''].join(' ').replace(/\s+/g, ' ').trim();
+      return { time: '12:00', rest };
+    }
+
+    // 早上/早晨/上午 X点 / X点半 / X点YY分
+    const morning = rest.match(/(.+)?(早上|早晨|上午)\s*(\d{1,2})\s*点(半|(\d{2})分?)?\s*(.+)?/);
+    if (morning) {
+      const h = parseInt(morning[3], 10);
+      const m = morning[4] === '半' ? 30 : morning[5] ? parseInt(morning[5], 10) : 0;
+      const hour = h === 12 ? 12 : h;
+      rest = [morning[1] ?? '', morning[6] ?? ''].join(' ').replace(/\s+/g, ' ').trim();
+      return { time: `${pad(hour)}:${pad(m)}`, rest };
+    }
+
+    // 下午 X点 / X点半 / X:YY
+    const afternoon = rest.match(/(.+)?下午\s*(\d{1,2})(?:\s*点(半|(\d{2})分?)?|\s*:(\d{2}))\s*(.+)?/);
+    if (afternoon) {
+      const h = parseInt(afternoon[2], 10);
+      const m = afternoon[3] === '半' ? 30 : afternoon[4] ? parseInt(afternoon[4], 10) : afternoon[5] ? parseInt(afternoon[5], 10) : 0;
+      const hour = h >= 12 ? h : h + 12;
+      rest = [afternoon[1] ?? '', afternoon[6] ?? ''].join(' ').replace(/\s+/g, ' ').trim();
+      return { time: `${pad(hour)}:${pad(m)}`, rest };
+    }
+
+    // 晚上/傍晚 X点
+    const evening = rest.match(/(.+)?(晚上|傍晚)\s*(\d{1,2})\s*点(半|(\d{2})分?)?\s*(.+)?/);
+    if (evening) {
+      const h = parseInt(evening[3], 10);
+      const m = evening[4] === '半' ? 30 : evening[5] ? parseInt(evening[5], 10) : 0;
+      const hour = h >= 12 ? h : h + 12;
+      rest = [evening[1] ?? '', evening[6] ?? ''].join(' ').replace(/\s+/g, ' ').trim();
+      return { time: `${pad(hour)}:${pad(m)}`, rest };
+    }
+
+    // 英文 afternoon 2:00 / morning 9:00
+    const enAfternoon = rest.match(/(.+)?(?:afternoon|pm)\s*(\d{1,2})(?::(\d{2}))?\s*(.+)?/i);
+    if (enAfternoon) {
+      const h = parseInt(enAfternoon[2], 10);
+      const m = enAfternoon[3] ? parseInt(enAfternoon[3], 10) : 0;
+      const hour = h >= 12 ? h : h + 12;
+      rest = [enAfternoon[1] ?? '', enAfternoon[4] ?? ''].join(' ').replace(/\s+/g, ' ').trim();
+      return { time: `${pad(hour)}:${pad(m)}`, rest };
+    }
+    const enMorning = rest.match(/(.+)?(?:morning|am)\s*(\d{1,2})(?::(\d{2}))?\s*(.+)?/i);
+    if (enMorning) {
+      const h = parseInt(enMorning[2], 10);
+      const m = enMorning[3] ? parseInt(enMorning[3], 10) : 0;
+      const hour = h === 12 ? 0 : h;
+      rest = [enMorning[1] ?? '', enMorning[4] ?? ''].join(' ').replace(/\s+/g, ' ').trim();
+      return { time: `${pad(hour)}:${pad(m)}`, rest };
+    }
+
+    // 纯数字时间 HH:mm 或 H:mm（24 小时）
+    const direct = rest.match(/(.+)?\b(\d{1,2}):(\d{2})\b\s*(.+)?/);
+    if (direct) {
+      const h = parseInt(direct[2], 10);
+      const m = parseInt(direct[3], 10);
+      if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+        rest = [direct[1] ?? '', direct[4] ?? ''].join(' ').replace(/\s+/g, ' ').trim();
+        return { time: `${pad(h)}:${pad(m)}`, rest };
+      }
+    }
+
+    // 仅「X点」或「X点半」（无 早上/下午 时按上午处理，12点=中午）
+    const point = rest.match(/(.+)?(\d{1,2})\s*点(半)?\s*(.+)?/);
+    if (point) {
+      const h = parseInt(point[2], 10);
+      const m = point[3] === '半' ? 30 : 0;
+      const hour = h >= 1 && h <= 12 ? (h === 12 ? 12 : h) : h;
+      rest = [point[1] ?? '', point[4] ?? ''].join(' ').replace(/\s+/g, ' ').trim();
+      return { time: `${pad(hour)}:${pad(m)}`, rest };
+    }
+
+    return null;
+  };
+
   const addTask = () => {
     if (!newTaskInput.trim()) return;
     const lines = markdown.split('\n');
@@ -255,7 +410,18 @@ const App: React.FC = () => {
       }
     }
 
-    const content = date ? `- [ ] ${text} @${date}` : `- [ ] ${text}`;
+    // 3. 自然语言时间识别：早上9点、下午2:00 等，从内容中解析并剥离
+    let dateTime = date ?? null;
+    const timeParsed = parseNaturalLanguageTime(text);
+    if (timeParsed) {
+      text = timeParsed.rest.replace(/\s+/g, ' ').trim();
+      const baseDate = date ?? todayStr;
+      dateTime = `${baseDate} ${timeParsed.time}`;
+    } else if (date) {
+      dateTime = date;
+    }
+
+    const content = dateTime ? `- [ ] ${text} @${dateTime}` : `- [ ] ${text}`;
     let insertIdx = selectedFilter.type === 'project'
       ? (() => {
           const projectName = selectedFilter.value.split(' / ').pop()?.trim();
@@ -641,22 +807,6 @@ const App: React.FC = () => {
 
         <div className="flex-1 overflow-y-auto px-5 space-y-8 custom-scrollbar">
           <div className="space-y-4">
-            <div className="px-3 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em]">Quick Search</div>
-            <div className="px-3">
-              <div className="relative group">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600 group-focus-within:text-blue-500 transition-colors" size={14}/>
-                <input 
-                  ref={searchInputRef}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-xl text-xs font-bold outline-none focus:ring-4 focus:ring-blue-500/5 transition-all dark:text-slate-200" 
-                  placeholder={t.searchPlaceholder} 
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-4">
             <div className="px-3 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em]">Navigation</div>
             
             {/* 🧪 VERIFICATION ROW */}
@@ -825,16 +975,58 @@ const App: React.FC = () => {
                 {activeView === 'stats' ? '' : `${filteredTasks.length} ${t.activeProjects}`}
               </span>
             </div>
+            {activeView !== 'stats' && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => { searchInputRef.current?.focus(); setSearchExpanded(true); }}
+                  className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors shrink-0"
+                  title={t.searchPlaceholder}
+                >
+                  <Search size={18} />
+                </button>
+                <input
+                  ref={searchInputRef}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={() => setSearchExpanded(true)}
+                  onBlur={() => setSearchExpanded(false)}
+                  className={cn(
+                    "rounded-xl text-xs font-bold outline-none transition-all duration-200 dark:text-slate-200 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 focus:ring-2 focus:ring-blue-500/20",
+                    searchExpanded || searchQuery ? "w-28 pl-2.5 pr-2 py-1.5 opacity-100" : "w-0 p-0 opacity-0 overflow-hidden border-0"
+                  )}
+                  placeholder={t.searchPlaceholder}
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-4 bg-white/50 dark:bg-slate-800/50 backdrop-blur-md p-1.5 rounded-2xl border border-white/50 dark:border-slate-700/50 shadow-xl shadow-slate-200/20 dark:shadow-none">
             <div className="px-4 flex items-center gap-3">
                <div className={cn("w-2 h-2 rounded-full", pomoState.isActive ? "bg-rose-500 animate-pulse" : "bg-slate-300 dark:bg-slate-600")}></div>
-               <span className="text-sm font-black font-mono tracking-tighter">25:00</span>
+               <span className="text-sm font-black font-mono tracking-tighter min-w-[3rem]">{formatPomoTime(pomoState.timeLeft)}</span>
             </div>
-            <button className="w-9 h-9 bg-blue-600 text-white rounded-xl flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-lg shadow-blue-500/30">
-               <Play size={16} fill="currentColor" />
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); pomoState.isActive ? stopPomo() : startPomo(); }}
+              className={cn(
+                "w-9 h-9 rounded-xl flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-lg",
+                pomoState.isActive ? "bg-amber-500 text-white shadow-amber-500/30" : "bg-blue-600 text-white shadow-blue-500/30"
+              )}
+              title={pomoState.isActive ? (lang === 'zh' ? '暂停' : 'Pause') : (lang === 'zh' ? '开始专注' : 'Start')}
+            >
+               {pomoState.isActive ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
             </button>
+            {(pomoState.isActive || pomoState.timeLeft !== pomoState.totalSeconds) && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); resetPomo(); }}
+                className="w-9 h-9 rounded-xl flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+                title={lang === 'zh' ? '复位' : 'Reset'}
+              >
+                <Square size={14} strokeWidth={2.5} />
+              </button>
+            )}
           </div>
         </header>
 
