@@ -4,25 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [0.2.3] - 2026-02-01
 
-### 🔧 UI 与番茄钟
-- **搜索框**：移至主区域「所有任务」标题后，左侧栏不再占用搜索区域，节省空间；仍为图标 + 可展开输入框，仅在任务列表视图显示。
-- **任务卡片**：六点抓手与卡片同色系（灰底、悬停略深），子任务不用蓝色；行高压缩（主任务 min-h 40px、子任务 36px），圆角与间距收紧；左侧勾选框颜色加强（未勾选 slate-500、已勾选 emerald-600），更醒目。
-- **番茄钟**：修复点击播放不启动的问题，增加倒计时逻辑与真实时间显示（MM:SS）；播放/暂停切换（运行中显示暂停钮）；新增复位按钮，在计时中或已走时未结束时可将时间恢复为当前模式默认值（25 分钟/5 分钟），并提示「番茄钟已重置」。
+### 🔧 UI & Pomodoro
+- **Search**: Moved to the main area after the "All Tasks" title; the sidebar no longer reserves space for search, saving room. Still an icon + expandable input, shown only in the task list view.
+- **Task cards**: Six-dot grip uses the same color family as the card (slate background, slightly darker on hover); subtasks no longer use blue. Row height reduced (main task min-h 40px, subtask 36px) with tighter rounding and spacing. Checkbox colors strengthened (unchecked slate-500, checked emerald-600) for better visibility.
+- **Pomodoro**: Fixed play button not starting the timer; added countdown logic and live time display (MM:SS). Play/Pause toggle (Pause icon when running). New Reset button to restore the current mode default (25 min work / 5 min break) while the timer is running or paused, with a "Pomodoro reset" toast.
 
 ## [0.2.2] - 2026-02-01
 
-### ⏰ 自然语言时间识别
-- **任务添加**：支持在快速添加任务时使用简单自然语言时间，从内容中解析并自动写入任务日期时间。
-- **中文**：早上/早晨/上午 9 点、9 点半、9 点 30 分；下午 2 点、下午 2:00、下午 2 点半；晚上/傍晚 8 点；中午；以及单独的「9 点」「2:00」等。
-- **英文**：morning/am 9、afternoon/pm 2:00，以及 24 小时制 14:00。
-- 时间会与已有日期逻辑结合（今天、明天、当前视图日期），若未写日期则默认为今天；解析到的时间关键词会从任务标题中剥离。
+### ⏰ Natural language time
+- **Task add**: Quick-add now supports simple natural-language time; time is parsed from the content and written into the task date/time.
+- **Chinese**: e.g. 早上/早晨/上午 9 点, 9 点半, 9 点 30 分; 下午 2 点, 下午 2:00, 下午 2 点半; 晚上/傍晚 8 点; 中午; and standalone "9 点", "2:00", etc.
+- **English**: morning/am 9, afternoon/pm 2:00, and 24h form 14:00.
+- Time is combined with existing date logic (today, tomorrow, current view date); if no date is given, today is used. Parsed time phrases are stripped from the task title.
 
 ## [0.2.1] - 2026-02-01
 
-### 📐 回顾统计字号与发布准备
-- **回顾统计 (Review Statistics)**：侧栏「回顾统计」按钮及成就中心三张卡片标签（累计完成、完成率、活跃天数）字号由 10px 调整为 14px，提升可读性。
-- **最近 7 天趋势图**：柱状图悬停提示与日期标签字号由 10px 调整为 12px。
-- 同步 Todo.md、TaskCard、GtdContext、gtd 类型等相关改动，测试通过后发布。
+### 📐 Review stats typography & release prep
+- **Review Statistics**: Sidebar "Review" button and Achievement Center card labels (Total Completed, Completion Rate, Active Days) font size increased from 10px to 14px for readability.
+- **Last 7 days trend**: Bar chart hover tooltip and date labels font size increased from 10px to 12px.
+- Synced Todo.md, TaskCard, GtdContext, gtd types and related changes; release after tests passed.
 
 ## [0.2.0] - 2026-02-01
 
@@ -50,7 +50,7 @@ A massive visual and structural transformation focused on information density an
 - **3-Column Professional Layout**:
   - **Master Sidebar**: Narrowed by 33% to maximize focus on tasks.
   - **Compact Master List**: Redesigned task cards with significantly reduced height and padding, allowing 2-3x more tasks per screen.
-  - **Right-Side Detail Inspector**: New滑出式 (Slide-out) panel for in-depth task property management.
+  - **Right-Side Detail Inspector**: New slide-out panel for in-depth task property management.
 - **Enhanced Task Detail Control**:
   - Direct title editing within the inspector.
   - Quick property toggles for Priority, Recurrence, Date, and Tags.
