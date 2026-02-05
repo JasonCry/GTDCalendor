@@ -5,6 +5,16 @@ description: Reduces token usage when working with Todo.md or similar backlog fi
 
 # Efficient Backlog / Todo Handling
 
+## Rule: Committed Documents in English
+
+**All documents that are included in a commit must be written in English.** This applies to:
+
+- README, CHANGELOG, DEPLOY, and other docs under version control
+- Commit messages (prefer English; use Chinese only when the user explicitly requests)
+- In-repo markdown, comments in committed docs, and any user-facing text in committed files
+
+When adding or editing files that will be committed, write their content in English unless the user explicitly asks for another language.
+
 ## Rule: Search First, Read Minimal
 
 When the goal is to **find uncompleted work** (e.g. "实现未实现的功能", "implement from Todo", "继续做待办"), do **not** read the entire backlog file.
