@@ -1,47 +1,49 @@
-# Markdown GTD 日程管理系统 (GTD Flow)
+# Markdown GTD Task System (GTD Flow)
 
-这是一个基于 **GTD (Getting Things Done)** 理念与 **Markdown** 数据存储的日程管理软件。
+A task and schedule manager based on **GTD (Getting Things Done)** and **Markdown** storage.
 
-## 🌟 核心理念
+## Core Principles
 
-- **数据透明化**：所有数据完全保存在标准的 Markdown 文件中，无私有数据库。
-- **GTD 工作流**：内置“收件箱”、“下一步行动”、“等待确认”和“将来/也许”等核心分类。
-- **可视化规划**：在保持纯文本灵活性的同时，提供直观的日历视图进行时间排程。
-
----
-
-## 🛠️ 技术方案
-
-- **核心框架**：React / Vue 3 (目前为 React 原型验证阶段)
-- **UI 风格**：TailwindCSS + Material Design 风格，极简现代
-- **图标系统**：Lucide React
-- **数据驱动**：基于 Markdown 字符串的实时解析引擎 (Parser-driven UI)
+- **Data transparency**: All data lives in standard Markdown files; no private database.
+- **GTD workflow**: Built-in buckets — Inbox, Next Actions, Waiting For, Someday/Maybe.
+- **Visual planning**: Calendar and list views while keeping plain-text flexibility.
 
 ---
 
-## 📅 功能模块
+## Tech Stack
 
-### 1. 清单视图 (List View)
-- 快速捕捉灵感与任务。
-- 支持按项目层级进行筛选和组织。
-- 任务状态实时同步。
-
-### 2. 日历视图 (Calendar View)
-- **日模式**：精确到 15 分钟的时间轴，支持任务拖拽排程。
-- **周模式**：纵览一周计划，支持跨天任务显示。
-- **月模式**：宏观掌控任务密度。
-- **交互**：支持鼠标在时间轴上“框选”直接创建特定时间段的任务。
-
-### 3. 源码模式 (Code View)
-- 直接编辑底层 Markdown 文本。
-- 实时预览修改结果。
+- **Framework**: React (Vue 3 variant in repo; React is the current focus)
+- **UI**: TailwindCSS, minimal modern style
+- **Icons**: Lucide React
+- **Data**: Parser-driven UI; real-time parsing of Markdown into tasks and projects
 
 ---
 
-## 📝 数据规范 (Storage Protocol)
+## Features
 
-系统通过解析 Markdown 标题和任务列表来构建数据模型：
+### 1. List View
+- Quick capture (inbox-first).
+- Filter and organize by project hierarchy.
+- Live task state sync.
 
+### 2. Calendar View (planned)
+- **Day**: 15-minute timeline, drag-to-schedule.
+- **Week**: Week overview, multi-day tasks.
+- **Month**: Task density at a glance.
+- **Interaction**: Click/drag on timeline to create time-blocked tasks.
 
-## 开发流程规范
- 1.每次将代码提交到 git 前，要自动将改动点更新到ChangeLog.md.
+### 3. Code / Source View
+- Edit the underlying Markdown directly.
+- Changes reflect in the app in real time.
+
+---
+
+## Data Format (Storage Protocol)
+
+The app parses Markdown headings and task lists into a structured model. Tasks are standard list items (`- [ ]` / `- [x]`) with optional metadata (dates, tags, priority).
+
+---
+
+## Development
+
+- Before committing to git, update **ChangeLog.md** with the list of changes.
