@@ -1,84 +1,65 @@
-# Gemini Context: GTD Flow (Vue 3)
+# GEMINI Context: GTD Flow
 
-This `GEMINI.md` provides context for the AI agent working on the **GTD Flow** project.
+## Project Overview
+GTD Flow is a high-performance productivity application based on the **Getting Things Done (GTD)** methodology. It uses **Markdown** as its primary data storage format, ensuring data transparency and portability. The project features a modern, minimal UI with Material Design principles and is implemented in both **React** and **Vue 3** for cross-platform flexibility (currently focused on web/desktop via browser).
 
-## 1. Project Overview
+### Key Technologies
+- **Frontend Frameworks**: React 18+ and Vue 3 (Composition API).
+- **Build Tool**: Vite.
+- **Styling**: Tailwind CSS with PostCSS.
+- **Icons**: Lucide (React/Vue versions).
+- **Date Handling**: `date-fns`.
+- **Animations**: Framer Motion (React version).
 
-**GTD Flow** is a Getting Things Done (GTD) schedule management application that prioritizes **data transparency**. It uses standard **Markdown** as its underlying data model. Users can manage tasks via a rich UI (List/Calendar views) or by directly editing the Markdown text.
+### Core Architecture
+- **Parser-Driven UI**: The application parses Markdown strings in real-time to build its internal task and project model.
+- **Local File System Access**: Uses the Web File System Access API to read and write directly to local `.md` files.
+- **Master-Detail Layout**: A 3-column professional layout with a sidebar, task list, and a detailed property inspector.
 
-*   **Framework**: Vue 3 (Composition API)
-*   **Build Tool**: Vite
-*   **Styling**: TailwindCSS
-*   **Icons**: Lucide Vue Next
-*   **State Management**: Local component state (ref/reactive) within `App.vue`.
-*   **Persistence**: `localStorage` (default) + File System Access API (for local `.md` file sync).
+## Building and Running
 
-## 2. Architecture & Data Flow
+### Common Prerequisites
+- **Node.js**: v18.0 or higher.
+- **npm**: Standard package manager.
 
-### Data Model
-The application state is driven by a single string of Markdown text (`markdown` ref in `App.vue`).
-*   **Parsing**: The `parsedData` computed property parses the Markdown into a tree structure of Projects (Headings) and Tasks (List items).
-*   **Two-Way Binding**:
-    *   **UI to Markdown**: Actions like adding tasks, toggling checkboxes, or dragging events in the calendar directly manipulate the Markdown string.
-    *   **Markdown to UI**: Changes to the Markdown string automatically trigger re-parsing and update the UI.
+### gtd-vue-app (Primary/Original Implementation)
+1.  **Navigate**: `cd gtd-vue-app`
+2.  **Install**: `npm install`
+3.  **Dev**: `npm run dev`
+4.  **Build**: `npm run build`
 
-### Storage Strategy
-1.  **Browser Storage**: Auto-saves to `localStorage` ('gtd-markdown').
-2.  **Local File System**: Uses the **File System Access API** to open, save, and watch a local `.md` file. File handles are persisted in IndexedDB via `utils/fileStorage.js`.
+### gtd-react-app (Modern Prototype)
+1.  **Navigate**: `cd gtd-react-app`
+2.  **Install**: `npm install`
+3.  **Dev**: `npm run dev`
+4.  **Build**: `npm run build`
 
-### Views
-*   **List View**: Standard task list organized by GTD categories (Inbox, Next Action, etc.) and Projects.
-*   **Calendar View**: Day, Week, and Month views. Supports dragging tasks to reschedule (modifies the `@date` tag in Markdown).
-*   **Code View**: Raw textarea to edit the Markdown directly.
+## Development Conventions
 
-## 3. Key Files
+### Markdown Protocol
+- **Projects**: Defined by Markdown headings (`#`, `##`, etc.).
+- **Tasks**: Defined by `- [ ]` or `- [x]`.
+- **Subtasks**: Indented `- [ ]` lists under a parent task.
+- **Metadata Tags**:
+  - **Date/Time**: `@YYYY-MM-DD [HH:mm[~HH:mm]]`
+  - **Done Date**: `@done(YYYY-MM-DD)`
+  - **Recurrence**: `@every(day|week|month)`
+  - **Priority**: `!1` (High), `!2` (Medium), `!3` (Low)
+  - **Tags**: `#tagname`
 
-### Active Application (`gtd-vue-app/`)
-*   **`src/App.vue`**: **CORE FILE**. Contains almost all application logic, including:
-    *   Markdown parsing logic (`parsedData`).
-    *   State management (`markdown`, `activeView`, `fileHandle`).
-    *   UI rendering for all views.
-    *   File System Access API integration.
-*   **`src/utils/fileStorage.js`**: Helper functions to save/retrieve file handles from IndexedDB.
-*   **`src/components/TaskCard.vue`**: Component for individual task items.
-*   **`src/components/ProjectItem.vue`**: Component for the sidebar project tree.
+### Coding Style
+- **Components**: Reusable UI components are located in `src/components`.
+- **State Management**: React version uses Context API (`GtdContext.tsx`); Vue version uses Composition API within `App.vue`.
+- **Styling**: Utility-first CSS using Tailwind. Avoid custom CSS unless necessary (use `index.css` or `style.css` for globals).
 
-### Legacy / Reference
-*   **`ListandGDT.vue`**: A **React** prototype of the application. **Do not modify this file** when working on the Vue app. It serves as a reference for the original logic.
+### Deployment
+- Static builds generated in `dist/` folders.
+- Compatible with Nginx, Vercel, Netlify, and GitHub Pages.
 
-## 4. Build & Development
-
-The project is located in `gtd-vue-app/`.
-
-### Commands
-```bash
-cd gtd-vue-app
-npm install         # Install dependencies
-npm run dev         # Start local development server
-npm run build       # Build for production
-```
-
-## 5. Markdown Data Protocol
-
-The parser relies on specific Markdown conventions:
-
-*   **Projects/Categories**: Headings (`#`, `##`, etc.). Nested headings create nested projects.
-    *   Standard GTD categories: `# 📥 收件箱`, `# ⚡ 下一步行动`, etc.
-*   **Tasks**: List items (`- [ ]` or `- [x]`).
-*   **Metadata**:
-    *   **Date/Time**: `@YYYY-MM-DD` or `@YYYY-MM-DD HH:mm` or `@YYYY-MM-DD HH:mm~HH:mm` appended to the task text.
-
-## 6. Current Status & Roadmap
-
-*   **Current Version**: V0.0.2
-*   **Implemented**: Basic views, Markdown parsing, Local file sync, File watching.
-*   **TODOs** (from `Todo.md`):
-    *   Enhanced parser (multi-line notes, links).
-    *   Mobile adaptation.
-    *   Priorities and Tags.
-
-## 7. Development Guidelines
-*   **ChangeLog**:every version release must do change the `ChangeLog.md`
-*   **Conventions**: Follow the existing Composition API style in `App.vue`. Use TailwindCSS for all styling.
-*   **Safety**: When modifying the parsing logic in `App.vue`, ensure it handles edge cases to prevent data loss in the Markdown string.
-*   **File System**: Testing File System Access API features usually requires a secure context (HTTPS or localhost).
+## Key Files
+- `readme.md`: Project philosophy and storage protocol.
+- `Todo.md`: Current development roadmap and task status.
+- `ChangeLog.md`: Version history and detailed feature notes.
+- `gtd-react-app/src/App.tsx`: Main logic for the React version.
+- `gtd-vue-app/src/App.vue`: Main logic for the Vue version.
+- `gtd-react-app/src/hooks/useGtdParser.ts`: Core Markdown parsing logic for React.
