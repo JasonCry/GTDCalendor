@@ -11,7 +11,7 @@ description: Reduces token usage when working with Todo.md or similar backlog fi
 
 - README, CHANGELOG, DEPLOY, and other docs under version control
 - Commit messages (prefer English; use Chinese only when the user explicitly requests)
-- In-repo markdown, comments in committed docs, and any user-facing text in committed files
+- In-repo markdown, comments in committed docs, and any user-facing text in commiçtted files
 
 When adding or editing files that will be committed, write their content in English unless the user explicitly asks for another language.
 

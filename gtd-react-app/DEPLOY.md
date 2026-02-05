@@ -76,6 +76,16 @@ python3 -m http.server 8080 --directory dist
 - 文件句柄会缓存在浏览器 **IndexedDB**，无需额外后端或数据库。
 - 建议使用 Chrome / Edge 以获得完整文件访问能力。
 
+## Sync server (LAN + mobile)
+
+To use the app from your phone on the same Wi‑Fi and keep tasks in sync with the MacBook:
+
+1. On the MacBook: `npm run build && npm run serve:sync` (or `npm run build:sync`).
+2. Open `http://<MacBook-IP>:3000` on both the MacBook and the phone.
+3. Data is stored on the server; changes on one device appear on the other (phone polls every 30s).
+
+The sync server serves the built app and a GET/POST API for the markdown store (saved under `data/store.json`). For best LAN performance, use this production build instead of `npm run dev`.
+
 ---
 
 部署完成后，在浏览器打开上述地址即可使用 GTD Flow。

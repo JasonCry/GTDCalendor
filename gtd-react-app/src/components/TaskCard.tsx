@@ -1,11 +1,11 @@
 import React, { useMemo } from 'react';
 import { 
-  CheckCircle2, Circle, Trash2, Clock, ListTodo, Repeat, CheckSquare, Square, GripVertical 
+  CheckCircle2, Circle, Trash2, Clock, ListTodo, Repeat, CheckSquare, Square, GripVertical, CornerUpLeft 
 } from 'lucide-react';
 import { isBefore, parseISO, isValid, startOfDay } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Task } from '../types/gtd';
+import { Task, type Subtask } from '../types/gtd';
 import { useGtd } from '../context/GtdContext';
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
@@ -20,14 +20,19 @@ interface TaskCardProps {
   onSelect: (id: string) => void;
   onOpenDetail: (task: Task) => void;
   onDragStart: (e: React.DragEvent, task: Task) => void;
+  onDragEnd?: () => void;
   onMakeSubtask: (sourceIdx: number, targetIdx: number) => void;
+  onPromoteSubtask?: (subtaskLineIndex: number) => void;
+  onOpenSubtaskDetail?: (lineIndex: number) => void;
+  isSubtaskDragging?: boolean;
+  isPromoteDropTarget?: boolean;
 }
 
 const SWIPE_THRESHOLD = 60;
 
 const TaskCard: React.FC<TaskCardProps> = React.memo(({ 
   task, isBatchMode, selected, isActive, 
-  onToggle, onDelete, onSelect, onOpenDetail, onDragStart, onMakeSubtask
+  onToggle, onDelete, onSelect, onOpenDetail, onDragStart, onDragEnd, onMakeSubtask, onPromoteSubtask, onOpenSubtaskDetail, isSubtaskDragging, isPromoteDropTarget
 }) => {
   const { lang } = useGtd();
   const [isSubtaskDropTarget, setIsSubtaskDropTarget] = React.useState(false);
@@ -83,18 +88,36 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
     }
   }, [task.priority]);
 
+  const subPriorityStyle = (p: Subtask['priority']) => {
+    switch(p) {
+      case 1: return "text-rose-500 bg-rose-50 dark:bg-rose-950/30 border-rose-100 dark:border-rose-900/50";
+      case 2: return "text-orange-500 bg-orange-50 dark:bg-orange-950/30 border-orange-100 dark:border-orange-900/50";
+      case 3: return "text-sky-500 bg-sky-50 dark:bg-sky-950/30 border-sky-100 dark:border-sky-900/50";
+      default: return "text-slate-400 bg-slate-50 dark:bg-slate-900/30 border-slate-100 dark:border-slate-800";
+    }
+  };
+
+  const showPromoteHint = isSubtaskDragging && isPromoteDropTarget;
+
   return (
     <div 
       className={cn(
         "task-card-root group relative flex flex-col bg-white dark:bg-slate-800 border rounded-xl transition-all duration-300 mb-1 shadow-sm overflow-hidden",
         task.completed ? "opacity-50" : "border-slate-200 dark:border-slate-700",
         isActive && "border-blue-500 ring-4 ring-blue-500/10",
-        selected && "border-blue-500 ring-2 ring-blue-500/20"
+        selected && "border-blue-500 ring-2 ring-blue-500/20",
+        showPromoteHint && "ring-2 ring-blue-500 border-blue-400 bg-blue-50/50 dark:bg-blue-900/20"
       )}
       onClick={handleCardClick}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
+      {showPromoteHint && (
+        <div className="flex items-center justify-center gap-2 py-1.5 px-3 bg-blue-500/15 dark:bg-blue-500/20 border-b border-blue-400/40 text-blue-700 dark:text-blue-300 text-xs font-bold">
+          <CornerUpLeft size={14} strokeWidth={2.5} />
+          {lang === 'zh' ? '松开即可提升为独立任务' : 'Drop to promote to task'}
+        </div>
+      )}
       <div className="flex min-h-[40px]">
         {/* 拖拽抓手：与卡片同色系，悬停略深 */}
         <div 
@@ -106,6 +129,7 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
              if (card) e.dataTransfer.setDragImage(card, 10, 10);
              onDragStart(e, task);
           }}
+          onDragEnd={() => onDragEnd?.()}
         >
           <GripVertical size={14} strokeWidth={2.5} />
         </div>
@@ -188,24 +212,60 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
                   e.stopPropagation();
                   onDragStart(e, { ...task, lineIndex: sub.lineIndex, content: sub.content, lineCount: 1, isSubtask: true } as any);
                 }}
+                onDragEnd={() => onDragEnd?.()}
               >
                 <GripVertical size={12} strokeWidth={2.5} />
               </div>
 
-              <div className="flex-1 flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group/sub">
+              <div 
+                className="flex-1 flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group/sub min-h-[36px]"
+                role={onOpenSubtaskDetail ? "button" : undefined}
+                onClick={onOpenSubtaskDetail ? (e) => { e.stopPropagation(); onOpenSubtaskDetail(sub.lineIndex); } : undefined}
+              >
                 <button 
                   onClick={(e) => { e.stopPropagation(); onToggle(sub.lineIndex, sub.completed); }}
                   className={cn("shrink-0 transition-all", sub.completed ? "text-emerald-600 dark:text-emerald-400" : "text-slate-500 dark:text-slate-400 hover:text-blue-500/80")}
                 >
                   {sub.completed ? <CheckCircle2 size={14} /> : <Circle size={14} strokeWidth={2.5} />}
                 </button>
-                <span className={cn("text-[12px] font-medium flex-1", sub.completed ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-300")}>
+                {sub.priority != null && sub.priority >= 1 && sub.priority <= 3 && (
+                  <span className={cn("text-[9px] font-black px-1 py-0.5 rounded border shrink-0", subPriorityStyle(sub.priority))}>P{sub.priority}</span>
+                )}
+                <span className={cn("text-[12px] font-medium flex-1 min-w-0 truncate", sub.completed ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-300")}>
                   {sub.content}
                 </span>
+                {sub.date && (
+                  <div className={cn("text-[9px] font-bold flex items-center gap-0.5 px-1 py-0.5 rounded shrink-0", "text-blue-500/80 bg-blue-50/50 dark:bg-blue-500/10")}>
+                    <Clock size={9} />
+                    <span>{sub.date.split(' ')[0].split('-').slice(1).join('/')}</span>
+                  </div>
+                )}
+                {sub.tags && sub.tags.length > 0 && (
+                  <div className="flex gap-0.5 shrink-0 flex-wrap">
+                    {sub.tags.slice(0, 2).map(tag => (
+                      <span key={tag} className="text-[9px] text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/80 px-1 rounded">#{tag}</span>
+                    ))}
+                    {sub.tags.length > 2 && <span className="text-[9px] text-slate-400">+{sub.tags.length - 2}</span>}
+                  </div>
+                )}
+                {sub.recurrence && (
+                  <span className="text-[9px] font-bold text-violet-600 dark:text-violet-400 shrink-0" title={sub.recurrence}>
+                    <Repeat size={9} strokeWidth={2.5} />
+                  </span>
+                )}
+                {onPromoteSubtask && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onPromoteSubtask(sub.lineIndex); }}
+                    className="p-1.5 rounded text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 opacity-80 group-hover/sub:opacity-100 transition-opacity min-h-[28px] min-w-[28px] flex items-center justify-center touch-manipulation"
+                    title={lang === 'zh' ? '提升为独立任务' : 'Promote to task'}
+                  >
+                    <CornerUpLeft size={14} strokeWidth={2.5} />
+                  </button>
+                )}
                 <button
                   onClick={(e) => { e.stopPropagation(); onDelete(sub.lineIndex); }}
-                  className="p-1 rounded text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 opacity-0 group-hover/sub:opacity-100 transition-opacity"
-                  title="删除子任务"
+                  className="p-1 rounded text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 opacity-80 group-hover/sub:opacity-100 transition-opacity min-h-[28px] min-w-[28px] flex items-center justify-center touch-manipulation"
+                  title={lang === 'zh' ? '删除子任务' : 'Delete subtask'}
                 >
                   <Trash2 size={12} strokeWidth={2.5} />
                 </button>

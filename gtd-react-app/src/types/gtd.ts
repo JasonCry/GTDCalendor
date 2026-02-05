@@ -5,6 +5,12 @@ export interface Subtask {
   content: string;
   completed: boolean;
   lineIndex: number;
+  date?: string | null;
+  doneDate?: string | null;
+  priority?: Priority;
+  tags?: string[];
+  recurrence?: Recurrence;
+  timezone?: string | null;
 }
 
 export interface Task {

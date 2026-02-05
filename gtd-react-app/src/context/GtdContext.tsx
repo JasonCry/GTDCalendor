@@ -119,7 +119,10 @@ export const GtdProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const addToast = useCallback((message: string, type: Toast['type'] = 'info') => {
     const id = Date.now();
-    setToasts(prev => [...prev, { id, message, type }]);
+    setToasts(prev => {
+      const next = [...prev, { id, message, type }];
+      return next.length > 5 ? next.slice(-5) : next;
+    });
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
   }, []);
 

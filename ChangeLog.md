@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.9] - 2026-02-04
+
+### Subtask drag-to-promote: blue insertion line
+- When dragging a subtask to promote it, a **blue horizontal line** appears between two parent tasks at the current drop target (above the card under the cursor). The line indicates exactly where the subtask will be inserted when released. Styled with `bg-blue-500` and a soft glow so it stays visible.
+
+## [0.2.8] - 2026-02-04
+
+### Subtask attributes: priority, date, tags, recurrence, timezone
+- **Subtask type** (gtd.ts): Extended with optional `date`, `doneDate`, `priority`, `tags`, `recurrence`, `timezone`. Parser (useGtdParser) now parses indented task lines with the same metadata as top-level tasks.
+- **TaskCard**: Subtask rows show P1/P2/P3, date, tags, and recurrence icon when set. Clicking the subtask row opens the Inspector for that subtask (same property panel as parent tasks).
+- **App**: `selectedSubtaskLineIndex` state and synthetic task resolution so Inspector receives a full Task for the selected subtask. `handleUpdateTask` preserves leading indent when updating a line (subtask lines stay indented). Parent card is highlighted when its subtask is selected in Inspector.
+
+## [0.2.7] - 2026-02-04
+
+### Subtask drag-to-promote: clearer visual feedback
+- When **dragging a subtask**, the app now tracks “subtask being dragged” and highlights valid drop targets. Any task card you hover over shows a clear band: **“松开即可提升为独立任务”** / **“Drop to promote to task”** with a blue border and icon, so it’s obvious where to release to promote.
+- `onDragEnd` clears the state so the hint disappears after drop. Drop target is cleared on `onDragLeave` and `onDrop`.
+
+## [0.2.6] - 2026-02-04
+
+### Subtask → parent: visible promote action
+- **Promote to task**: Subtask rows now have an explicit “Promote to task” (提升为独立任务) button (CornerUpLeft icon). Clicking it promotes that subtask to a top-level task directly under the parent, with toast “Promoted to task”.
+- **UI**: Button is always visible (opacity-80) so it works on touch; tooltip and touch-manipulation for mobile. Delete subtask button aligned with same visibility.
+
+## [0.2.5] - 2026-02-04
+
+### LAN, mobile UX & sync (Todo V0.2.5)
+
+- **LAN performance**: Production build now uses code-splitting (vendor, ui, date chunks) and `target: es2020` for smaller, cache-friendly assets. Use `npm run build` then `npm run serve:sync` for best LAN/mobile load.
+- **Sync server**: New Node server (`server.mjs`) serves the built app and GET/POST `/api/markdown` so MacBook and phone on the same Wi‑Fi share one task list. Run `npm run build:sync` or `npm run build && npm run serve:sync`; open `http://<MacBook-IP>:3000` on both devices. Data is stored in `data/store.json`. App auto-detects sync mode when `/api/markdown` is available and polls every 30s on the client.
+- **Mobile UI/UX**: Sidebar is an overlay on small screens (≤768px) with a backdrop; default closed on mobile. Touch targets: main menu and workflow buttons use `min-h-[44px]` and `touch-manipulation`. Safe-area insets and theme-color meta added; 16px base font on mobile to reduce zoom on focus.
+- **Docs**: DEPLOY.md updated with “Sync server (LAN + mobile)” section. Todo.md V0.2.5 items marked done.
+
 ## [0.2.3] - 2026-02-01
 
 ### 🔧 UI & Pomodoro

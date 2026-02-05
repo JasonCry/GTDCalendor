@@ -37,18 +37,31 @@ export const useGtdParser = (markdown: string, translations: any) => {
         stack.push(node);
       } else if (currentTask && (line.startsWith('  ') || line.startsWith('\t'))) {
         if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]')) {
+          const dateMatch = trimmed.match(/@(\d{4}-\d{2}-\d{2}(~\d{4}-\d{2}-\d{2})?(\s\d{2}:\d{2}(~\d{2}:\d{2})?)?)/);
+          const doneMatch = trimmed.match(/@done\((\d{4}-\d{2}-\d{2})\)/);
+          const everyMatch = trimmed.match(/@every\((day|week|month)\)/);
+          const tzMatch = trimmed.match(/@tz\(([^)]+)\)/);
+          const priorityMatch = trimmed.match(/!([1-3])/);
+          const tagsMatch = trimmed.match(/#([^\s#]+)/g);
           const cleanContent = trimmed
             .replace(/^- \[[ x]\]\s*/, '')
             .replace(/@\d{4}-\d{2}-\d{2}(~\d{4}-\d{2}-\d{2})?(\s\d{2}:\d{2}(~\d{2}:\d{2})?)?/, '')
             .replace(/@done\(\d{4}-\d{2}-\d{2}\)/, '')
             .replace(/@every\((day|week|month)\)/, '')
+            .replace(/@tz\([^)]+\)/, '')
             .replace(/![1-3]/, '')
             .replace(/#[^\s#]+/g, '')
             .trim();
           currentTask.subtasks.push({
             content: cleanContent,
             completed: trimmed.startsWith('- [x]'),
-            lineIndex: index
+            lineIndex: index,
+            date: dateMatch ? dateMatch[1] : null,
+            doneDate: doneMatch ? doneMatch[1] : null,
+            priority: (priorityMatch ? parseInt(priorityMatch[1]) : null) as Priority,
+            tags: tagsMatch ? tagsMatch.map(t => t.substring(1)) : [],
+            recurrence: (everyMatch ? everyMatch[1] : null) as Recurrence,
+            timezone: tzMatch ? tzMatch[1].trim() : null
           });
         } else {
           currentTask.notes.push(trimmed);

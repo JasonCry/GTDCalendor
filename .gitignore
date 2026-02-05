@@ -10,6 +10,9 @@ coverage
 dist
 build
 
+# Sync server runtime data
+gtd-react-app/data/
+
 # Misc
 .DS_Store
 .env

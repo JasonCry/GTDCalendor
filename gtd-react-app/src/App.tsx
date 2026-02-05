@@ -12,6 +12,7 @@ import { twMerge } from 'tailwind-merge';
 import { useGtd } from './context/GtdContext';
 import { useGtdParser } from './hooks/useGtdParser';
 import { getFileHandle, saveFileHandle, removeFileHandle } from './utils/fileStorage';
+import { fetchMarkdown, pushMarkdown } from './utils/syncApi';
 import TaskCard from './components/TaskCard';
 import ProjectItem from './components/ProjectItem';
 import Inspector from './components/Inspector';
@@ -39,13 +40,14 @@ const App: React.FC = () => {
   const { 
     lang, setLang, isDarkMode, setIsDarkMode, userTimezone, setUserTimezone, effectiveTimezone, sidebarOpen, setSidebarOpen,
     activeView, setActiveView, selectedFilter, setSelectedFilter,
-    toasts, addToast, pomoState, setPomoState, syncStatus, t
+    toasts, addToast, pomoState, setPomoState, syncStatus, setSyncStatus, t
   } = useGtd();
 
   const [markdown, setMarkdown] = useState(localStorage.getItem('gtd-markdown') || DEFAULT_GTD_TEMPLATE);
   const [newTaskInput, setNewTaskInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedSubtaskLineIndex, setSelectedSubtaskLineIndex] = useState<number | null>(null);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [isLanguageDropdownOpen, setIsLanguageDropdownOpen] = useState(false);
@@ -66,8 +68,15 @@ const App: React.FC = () => {
   const [dragOverWorkflowPath, setDragOverWorkflowPath] = useState<string | null>(null);
   const [hasCurrentFile, setHasCurrentFile] = useState(false);
   const [isDefaultFile, setIsDefaultFile] = useState(false);
+  const [syncMode, setSyncMode] = useState(false);
+  const [isSubtaskDragging, setIsSubtaskDragging] = useState(false);
+  const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null);
 
   const mainInputRef = useRef<HTMLInputElement>(null);
+  const syncModeRef = useRef(false);
+  syncModeRef.current = syncMode;
+  const notificationRequestedRef = useRef(false);
+  const checkTaskNotificationsRef = useRef<() => void>(() => {});
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const pomoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -137,7 +146,31 @@ const App: React.FC = () => {
     addToast(lang === 'zh' ? '番茄钟已重置' : 'Pomodoro reset', 'info');
   }, [setPomoState, addToast, lang]);
 
-  const selectedTask = useMemo(() => allTasks.find(t => t.id === selectedTaskId), [allTasks, selectedTaskId]);
+  const selectedTask = useMemo(() => {
+    if (selectedSubtaskLineIndex != null) {
+      const parent = allTasks.find(t => t.subtasks.some(s => s.lineIndex === selectedSubtaskLineIndex));
+      if (!parent) return null;
+      const sub = parent.subtasks.find(s => s.lineIndex === selectedSubtaskLineIndex);
+      if (!sub) return null;
+      return {
+        id: `sub-${sub.lineIndex}`,
+        lineIndex: sub.lineIndex,
+        lineCount: 1,
+        content: sub.content,
+        completed: sub.completed,
+        date: sub.date ?? null,
+        doneDate: sub.doneDate ?? null,
+        recurrence: (sub.recurrence ?? null) as import('./types/gtd').Recurrence,
+        priority: (sub.priority ?? null) as import('./types/gtd').Priority,
+        tags: sub.tags ?? [],
+        timezone: sub.timezone ?? null,
+        projectPath: parent.projectPath,
+        notes: [],
+        subtasks: []
+      } as Task;
+    }
+    return allTasks.find(t => t.id === selectedTaskId) ?? null;
+  }, [allTasks, selectedTaskId, selectedSubtaskLineIndex]);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -205,17 +238,29 @@ const App: React.FC = () => {
       }
     });
   }, [allTasks, getTaskMomentUtc, addToast, lang]);
+  checkTaskNotificationsRef.current = checkTaskNotifications;
 
   useEffect(() => {
-    requestNotificationPermission();
-    notificationIntervalRef.current = setInterval(checkTaskNotifications, 60000);
+    if (!notificationRequestedRef.current) {
+      notificationRequestedRef.current = true;
+      if (typeof window !== 'undefined' && window.innerWidth > 768) {
+        requestNotificationPermission();
+      }
+    }
+    notificationIntervalRef.current = setInterval(() => checkTaskNotificationsRef.current(), 60000);
     return () => {
       if (notificationIntervalRef.current) {
         clearInterval(notificationIntervalRef.current);
         notificationIntervalRef.current = null;
       }
     };
-  }, [requestNotificationPermission, checkTaskNotifications]);
+  }, [requestNotificationPermission]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches) {
+      setSidebarOpen(false);
+    }
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('gtd-project-groups', JSON.stringify(projectGroups));
@@ -237,7 +282,17 @@ const App: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    const loadDefault = async () => {
+    (async () => {
+      const remote = await fetchMarkdown();
+      if (cancelled) return;
+      if (remote !== null) {
+        setMarkdown(remote);
+        localStorage.setItem('gtd-markdown', remote);
+        setHasCurrentFile(true);
+        setSyncMode(true);
+        setSyncStatus('synced');
+        return;
+      }
       try {
         const defaultHandle = await getFileHandle();
         if (!defaultHandle || cancelled) return;
@@ -253,10 +308,19 @@ const App: React.FC = () => {
       } catch {
         // Permission denied or no default file
       }
-    };
-    loadDefault();
+    })();
     return () => { cancelled = true; };
-  }, []);
+  }, [setSyncStatus]);
+
+  useEffect(() => {
+    if (!syncMode) return;
+    const t = setInterval(async () => {
+      const remote = await fetchMarkdown();
+      if (remote === null) return;
+      setMarkdown(prev => (prev !== remote ? remote : prev));
+    }, 30000);
+    return () => clearInterval(t);
+  }, [syncMode]);
 
   const loadFileContent = useCallback(async (handle: FileSystemFileHandle) => {
     const file = await handle.getFile();
@@ -323,6 +387,9 @@ const App: React.FC = () => {
     if (currentFileHandle.current) {
       saveToFile(content);
     }
+    if (syncModeRef.current) {
+      pushMarkdown(content).then(ok => setSyncStatus(ok ? 'synced' : 'sync failed'));
+    }
   }, [saveToFile]);
 
   const handleSaveFile = useCallback(async () => {
@@ -336,24 +403,27 @@ const App: React.FC = () => {
 
   const handleUpdateTask = useCallback((lineIndex: number, updates: Partial<Task>) => {
     const lines = markdown.split('\n');
+    const currentLine = lines[lineIndex];
+    if (currentLine == null) return;
+    const indentMatch = currentLine.match(/^(\s*)/);
+    const indent = indentMatch ? indentMatch[1] : '';
+
     const task = allTasks.find(t => t.lineIndex === lineIndex);
-    if (!task) return;
+    const newContent = updates.content ?? task?.content ?? '';
+    const newCompleted = updates.completed ?? task?.completed ?? false;
+    const newDate = updates.date ?? task?.date ?? null;
+    const newPriority = updates.priority ?? task?.priority ?? null;
+    const newTags = updates.tags ?? task?.tags ?? [];
+    const newRecurrence = updates.recurrence ?? task?.recurrence ?? null;
+    const newTimezone = updates.timezone ?? task?.timezone ?? null;
 
-    const newContent = updates.content ?? task.content;
-    const newCompleted = updates.completed ?? task.completed;
-    const newDate = updates.date ?? task.date;
-    const newPriority = updates.priority ?? task.priority;
-    const newTags = updates.tags ?? task.tags;
-    const newRecurrence = updates.recurrence ?? task.recurrence;
-    const newTimezone = updates.timezone ?? task.timezone;
-
-    let newLine = `- [${newCompleted ? 'x' : ' '}] ${newContent}`;
+    let newLine = `${indent}- [${newCompleted ? 'x' : ' '}] ${newContent}`;
     if (newPriority) newLine += ` !${newPriority}`;
     if (newDate) newLine += ` @${newDate}`;
     if (newRecurrence) newLine += ` @every(${newRecurrence})`;
     if (newTimezone) newLine += ` @tz(${newTimezone})`;
     if (newTags?.length) newLine += ` ${newTags.map(tg => '#' + tg).join(' ')}`;
-    
+
     lines[lineIndex] = newLine;
     saveToDisk(lines.join('\n'));
   }, [markdown, allTasks, saveToDisk]);
@@ -526,13 +596,20 @@ const App: React.FC = () => {
     lines.splice(idx, lineCount);
     saveToDisk(lines.join('\n'));
     if (selectedTaskId && task && task.id === selectedTaskId) setSelectedTaskId(null);
+    if (selectedSubtaskLineIndex !== null && task && task.lineIndex === selectedSubtaskLineIndex) setSelectedSubtaskLineIndex(null);
     addToast(t.deleteSelected, 'info');
   };
 
   const onDragStart = (e: React.DragEvent, task: Task) => {
     e.dataTransfer.setData('task', JSON.stringify(task));
     e.dataTransfer.effectAllowed = 'move';
+    setIsSubtaskDragging(!!(task as any).isSubtask);
   };
+
+  const onDragEnd = useCallback(() => {
+    setIsSubtaskDragging(false);
+    setDragOverTaskId(null);
+  }, []);
 
   const onTaskDrop = (e: React.DragEvent, targetLineIdx: number) => {
     e.preventDefault();
@@ -624,6 +701,22 @@ const App: React.FC = () => {
     saveToDisk(lines.join('\n'));
     addToast(lang === 'zh' ? '已转为子任务' : 'Converted to subtask', 'success');
   };
+
+  const handlePromoteSubtask = useCallback((subtaskLineIndex: number) => {
+    const lines = markdown.split('\n');
+    const line = lines[subtaskLineIndex];
+    if (!line || !/^\s+- \[[ x]\]/.test(line)) return;
+    const parent = allTasks.find(
+      t => t.lineIndex <= subtaskLineIndex && (t.lineIndex + (t.lineCount || 1)) > subtaskLineIndex
+    );
+    if (!parent) return;
+    const parentLineIndex = parent.lineIndex;
+    const oneLine = lines.splice(subtaskLineIndex, 1)[0];
+    const unindented = oneLine.replace(/^\s+/, '');
+    lines.splice(parentLineIndex + 1, 0, unindented);
+    saveToDisk(lines.join('\n'));
+    addToast(lang === 'zh' ? '已提升为独立任务' : 'Promoted to task', 'success');
+  }, [markdown, allTasks, saveToDisk, addToast, lang]);
 
   const handleAddProject = () => {
     const lines = markdown.split('\n');
@@ -849,11 +942,21 @@ const App: React.FC = () => {
         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-400/10 dark:bg-indigo-600/5 blur-[120px] rounded-full"></div>
       </div>
 
-      {/* Sidebar - Bento Style (Column 1) */}
+      {/* Mobile: backdrop when sidebar open */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-[18] md:hidden"
+          aria-hidden
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      {/* Sidebar: overlay on mobile, column on desktop */}
       <motion.aside 
         initial={false}
         animate={{ width: sidebarOpen ? 280 : 0 }}
-        className="relative bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border-r border-slate-200/50 dark:border-slate-800/50 flex flex-col overflow-hidden z-20 shrink-0"
+        className={cn(
+          "fixed md:relative left-0 top-0 h-full md:h-auto bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-r border-slate-200/50 dark:border-slate-800/50 flex flex-col overflow-hidden z-20 shrink-0 shadow-xl md:shadow-none"
+        )}
       >
         <div className="p-8 flex items-center justify-between shrink-0">
           <div ref={dropdownRef} className="relative">
@@ -979,7 +1082,7 @@ const App: React.FC = () => {
                       } catch (err) { console.error('Drop error:', err); }
                     }}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left text-sm font-bold transition-all cursor-pointer",
+                      "w-full flex items-center gap-3 px-3 py-2.5 min-h-[44px] rounded-2xl text-left text-sm font-bold transition-all cursor-pointer touch-manipulation",
                       active ? "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50",
                       isDragOver && "ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/30"
                     )}
@@ -1099,7 +1202,7 @@ const App: React.FC = () => {
       <main className="flex-1 flex flex-col relative min-w-0 z-10">
         <header className="h-20 flex items-center justify-between px-8 shrink-0">
           <div className="flex items-center gap-5">
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2.5 hover:bg-white dark:hover:bg-slate-800 shadow-sm border border-slate-200/50 dark:border-slate-700/50 rounded-xl transition-all">
+            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="min-h-[44px] min-w-[44px] p-2.5 hover:bg-white dark:hover:bg-slate-800 shadow-sm border border-slate-200/50 dark:border-slate-700/50 rounded-xl transition-all touch-manipulation">
               {sidebarOpen ? <ChevronLeft size={18}/> : <Menu size={18}/>}
             </button>
             <div className="flex flex-col">
@@ -1257,20 +1360,30 @@ const App: React.FC = () => {
                       animate={{ opacity: 1, scale: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.9, x: -20 }}
                       transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => onTaskDrop(e, task.lineIndex)}
+                      className="relative"
+                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverTaskId(task.id); }}
+                      onDragLeave={() => setDragOverTaskId(null)}
+                      onDrop={(e) => { setDragOverTaskId(null); onTaskDrop(e, task.lineIndex); }}
                     >
+                      {isSubtaskDragging && dragOverTaskId === task.id && (
+                        <div className="absolute left-0 right-0 -top-1 z-10 h-0.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)] pointer-events-none" aria-hidden />
+                      )}
                       <TaskCard 
                         task={task}
-                        isActive={selectedTaskId === task.id}
+                        isActive={selectedTaskId === task.id || (selectedSubtaskLineIndex != null && task.subtasks.some(s => s.lineIndex === selectedSubtaskLineIndex))}
                         isBatchMode={isBatchMode}
                         selected={selectedTaskIds.has(task.id)}
                         onToggle={handleToggle}
                         onDelete={handleDeleteTask}
                         onSelect={(id) => {}}
-                        onOpenDetail={(t) => setSelectedTaskId(t.id)}
+                        onOpenDetail={(t) => { setSelectedTaskId(t.id); setSelectedSubtaskLineIndex(null); }}
+                        onOpenSubtaskDetail={(lineIndex) => { setSelectedTaskId(null); setSelectedSubtaskLineIndex(lineIndex); }}
                         onDragStart={onDragStart}
+                        onDragEnd={onDragEnd}
                         onMakeSubtask={handleMakeSubtask}
+                        onPromoteSubtask={handlePromoteSubtask}
+                        isSubtaskDragging={isSubtaskDragging}
+                        isPromoteDropTarget={dragOverTaskId === task.id}
                       />
                     </motion.div>
                   ))}
@@ -1286,7 +1399,7 @@ const App: React.FC = () => {
         {selectedTask && (
           <Inspector 
             task={selectedTask}
-            onClose={() => setSelectedTaskId(null)}
+            onClose={() => { setSelectedTaskId(null); setSelectedSubtaskLineIndex(null); }}
             onUpdate={handleUpdateTask}
             onToggleSubtask={handleToggleSubtask}
             translations={t}

@@ -8,9 +8,12 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy:local": "vite build && vite preview",
-    "start": "vite"
+    "start": "vite",
+    "serve:sync": "node server.mjs",
+    "build:sync": "vite build && node server.mjs"
   },
   "dependencies": {
+    "express": "^4.21.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "lucide-react": "^0.344.0",

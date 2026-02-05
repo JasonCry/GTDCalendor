@@ -4,10 +4,23 @@ import react from '@vitejs/plugin-react'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    target: 'es2020',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          ui: ['framer-motion', 'lucide-react', 'clsx', 'tailwind-merge'],
+          date: ['date-fns'],
+        },
+      },
+    },
+    sourcemap: false,
+  },
   server: {
-    host: true,        // 监听所有网卡，本机 IP 可访问
+    host: true,
     port: 5173,
-    strictPort: false, // 端口占用时自动尝试下一端口
+    strictPort: false,
   },
   preview: {
     host: true,
