@@ -18,6 +18,7 @@ export interface Task {
   recurrence: Recurrence;
   priority: Priority;
   tags: string[];
+  timezone: string | null;
   projectPath: string;
   notes: string[];
   subtasks: Subtask[];

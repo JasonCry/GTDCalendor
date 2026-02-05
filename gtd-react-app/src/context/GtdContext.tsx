@@ -19,6 +19,9 @@ interface GtdContextType {
   setLang: (l: string) => void;
   isDarkMode: boolean;
   setIsDarkMode: (v: boolean) => void;
+  userTimezone: string;
+  setUserTimezone: (v: string) => void;
+  effectiveTimezone: string;
   sidebarOpen: boolean;
   setSidebarOpen: (v: boolean) => void;
   activeView: ViewType;
@@ -43,6 +46,27 @@ export const GtdProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem('gtd-lang', l);
   }, []);
   const [isDarkMode, setIsDarkMode] = useState(localStorage.getItem('gtd-dark-mode') === 'true');
+  const [userTimezone, setUserTimezoneState] = useState(() => {
+    const stored = localStorage.getItem('gtd-timezone');
+    if (stored !== null) return stored;
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    } catch {
+      return 'UTC';
+    }
+  });
+  const setUserTimezone = useCallback((tz: string) => {
+    setUserTimezoneState(tz);
+    localStorage.setItem('gtd-timezone', tz);
+  }, []);
+  const effectiveTimezone = useMemo(() => {
+    if (userTimezone !== '') return userTimezone;
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    } catch {
+      return 'UTC';
+    }
+  }, [userTimezone]);
   const [sidebarOpen, setSidebarOpen] = useState(localStorage.getItem('gtd-sidebar-open') !== 'false');
   const [activeView, setActiveView] = useState<ViewType>('view');
   const [selectedFilter, setSelectedFilter] = useState<Filter>({ type: 'all', value: 'ALL' });
@@ -67,7 +91,9 @@ export const GtdProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       review: '回顾统计', achievementCenter: '成就中心', totalCompleted: '累计完成', completionRate: '完成率',
       activeDays: '活跃天数', weeklyTrend: '最近 7 天完成趋势', projectDistribution: '项目完成分布',
       noData: '暂无统计数据，开始执行任务吧！',
-      newGroup: '新建组', ungrouped: '未分组', deleteGroup: '删除组', renameGroup: '重命名组', confirmDeleteGroup: '确定删除该组？组内项目将变为未分组。'
+      newGroup: '新建组', ungrouped: '未分组', deleteGroup: '删除组', renameGroup: '重命名组', confirmDeleteGroup: '确定删除该组？组内项目将变为未分组。',
+      timezone: '时区', timezoneAuto: '自动（浏览器）', timezoneDefault: '默认（应用设置）',
+      timezoneFixedTime: '固定时间（以当地时间为准）', timezoneFixedTz: '固定时区'
     },
     en: {
       allTasks: 'All Tasks', today: 'Today', tomorrow: 'Tomorrow', next7Days: 'Next 7 Days', calendar: 'Calendar',
@@ -80,7 +106,9 @@ export const GtdProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       review: 'Review & Stats', achievementCenter: 'Achievement Center', totalCompleted: 'Completed',
       completionRate: 'Success Rate', activeDays: 'Active Days', weeklyTrend: 'Weekly Completion Trend',
       projectDistribution: 'Project Distribution', noData: 'No stats yet. Start getting things done!',
-      newGroup: 'New group', ungrouped: 'Ungrouped', deleteGroup: 'Delete group', renameGroup: 'Rename group', confirmDeleteGroup: 'Delete this group? Projects in it will become ungrouped.'
+      newGroup: 'New group', ungrouped: 'Ungrouped', deleteGroup: 'Delete group', renameGroup: 'Rename group', confirmDeleteGroup: 'Delete this group? Projects in it will become ungrouped.',
+      timezone: 'Timezone', timezoneAuto: 'Auto (browser)', timezoneDefault: 'Default (app setting)',
+      timezoneFixedTime: 'Fixed time (use local time)', timezoneFixedTz: 'Fixed timezone'
     }
   }[lang]), [lang]);
 
@@ -96,7 +124,7 @@ export const GtdProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, []);
 
   const value = {
-    lang, setLang, isDarkMode, setIsDarkMode, sidebarOpen, setSidebarOpen,
+    lang, setLang, isDarkMode, setIsDarkMode, userTimezone, setUserTimezone, effectiveTimezone, sidebarOpen, setSidebarOpen,
     activeView, setActiveView, selectedFilter, setSelectedFilter,
     toasts, addToast, pomoState, setPomoState, syncStatus, setSyncStatus,
     t: translations

@@ -19,14 +19,30 @@ import { Task, ProjectNode, ProjectGroup } from './types/gtd';
 
 const cn = (...inputs: any[]) => twMerge(clsx(inputs));
 
+/** 默认 GTD 工作流模板：收件箱、下一步行动、等待确认、将来/也许 */
+const DEFAULT_GTD_TEMPLATE = `# 📥 收件箱
+- [ ] 示例任务（可删除或开始添加）
+
+# ⚡ 下一步行动
+
+
+# ⏳ 等待确认
+
+
+# ☕ 将来/也许
+`;
+
+/** 固定 GTD 工作流路径（与模板中的一级标题一致，用于侧栏与筛选） */
+const GTD_WORKFLOW_PATHS = ['📥 收件箱', '⚡ 下一步行动', '⏳ 等待确认', '☕ 将来/也许'] as const;
+
 const App: React.FC = () => {
   const { 
-    lang, setLang, isDarkMode, setIsDarkMode, sidebarOpen, setSidebarOpen,
+    lang, setLang, isDarkMode, setIsDarkMode, userTimezone, setUserTimezone, effectiveTimezone, sidebarOpen, setSidebarOpen,
     activeView, setActiveView, selectedFilter, setSelectedFilter,
     toasts, addToast, pomoState, setPomoState, syncStatus, t
   } = useGtd();
 
-  const [markdown, setMarkdown] = useState(localStorage.getItem('gtd-markdown') || '# 📥 收件箱\n- [ ] 🚀 开启 TypeScript & Modern UI 之旅');
+  const [markdown, setMarkdown] = useState(localStorage.getItem('gtd-markdown') || DEFAULT_GTD_TEMPLATE);
   const [newTaskInput, setNewTaskInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -47,6 +63,7 @@ const App: React.FC = () => {
   const [editingGroupName, setEditingGroupName] = useState('');
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
   const [dragOverUngrouped, setDragOverUngrouped] = useState(false);
+  const [dragOverWorkflowPath, setDragOverWorkflowPath] = useState<string | null>(null);
   const [hasCurrentFile, setHasCurrentFile] = useState(false);
   const [isDefaultFile, setIsDefaultFile] = useState(false);
 
@@ -54,9 +71,31 @@ const App: React.FC = () => {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const pomoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const notificationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const notifiedTaskIdsRef = useRef<Set<string>>(new Set());
   const currentFileHandle = useRef<any>(null);
 
   const { projects, allTasks } = useGtdParser(markdown, t);
+
+  const TZ_OFFSET_MINUTES: Record<string, number> = {
+    UTC: 0,
+    'Asia/Shanghai': 8 * 60,
+    'Asia/Tokyo': 9 * 60,
+    'America/New_York': -5 * 60,
+    'America/Los_Angeles': -8 * 60,
+    'Europe/London': 0,
+    'Europe/Paris': 1 * 60
+  };
+
+  const getTaskMomentUtc = useCallback((task: Task): number | null => {
+    if (!task.date?.includes(' ')) return null;
+    const [datePart, timePart] = task.date.split(' ');
+    const [y, m, d] = datePart.split('-').map(Number);
+    const [h, min] = timePart.split(':').map(Number);
+    const tz = task.timezone || effectiveTimezone;
+    const offsetMin = TZ_OFFSET_MINUTES[tz] ?? 0;
+    return Date.UTC(y, m - 1, d, h, min, 0) - offsetMin * 60 * 1000;
+  }, [effectiveTimezone]);
 
   const formatPomoTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -140,11 +179,55 @@ const App: React.FC = () => {
     };
   }, [pomoState.isActive, setPomoState, addToast, lang]);
 
+  const requestNotificationPermission = useCallback(async () => {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+  }, []);
+
+  const checkTaskNotifications = useCallback(() => {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const now = Date.now();
+    allTasks.forEach((task: Task) => {
+      if (task.completed || !task.date?.includes(' ') || notifiedTaskIdsRef.current.has(task.id)) return;
+      const taskUtc = getTaskMomentUtc(task);
+      if (taskUtc == null) return;
+      const diffMinutes = (taskUtc - now) / (1000 * 60);
+      if (diffMinutes > 0 && diffMinutes <= 10) {
+        try {
+          const timeStr = task.date.split(' ')[1] || '';
+          new Notification(lang === 'zh' ? '任务提醒 | GTD Flow' : 'Task reminder | GTD Flow', {
+            body: lang === 'zh' ? `任务 "${task.content}" 即将开始 (${timeStr})` : `Task "${task.content}" starting soon (${timeStr})`
+          });
+          notifiedTaskIdsRef.current.add(task.id);
+          addToast(lang === 'zh' ? `提醒: ${task.content}` : `Reminder: ${task.content}`, 'info');
+        } catch (_) {}
+      }
+    });
+  }, [allTasks, getTaskMomentUtc, addToast, lang]);
+
+  useEffect(() => {
+    requestNotificationPermission();
+    notificationIntervalRef.current = setInterval(checkTaskNotifications, 60000);
+    return () => {
+      if (notificationIntervalRef.current) {
+        clearInterval(notificationIntervalRef.current);
+        notificationIntervalRef.current = null;
+      }
+    };
+  }, [requestNotificationPermission, checkTaskNotifications]);
+
   useEffect(() => {
     localStorage.setItem('gtd-project-groups', JSON.stringify(projectGroups));
   }, [projectGroups]);
 
   const projectPathsSet = useMemo(() => new Set(projects.map(p => p.path)), [projects]);
+
+  /** 排除固定 GTD 工作流后的项目列表（固定四项在侧栏顶部单独展示） */
+  const customProjects = useMemo(() =>
+    projects.filter(p => !GTD_WORKFLOW_PATHS.includes(p.path as typeof GTD_WORKFLOW_PATHS[number])),
+    [projects]
+  );
   useEffect(() => {
     setProjectGroups(prev => prev.map(g => ({
       ...g,
@@ -262,11 +345,13 @@ const App: React.FC = () => {
     const newPriority = updates.priority ?? task.priority;
     const newTags = updates.tags ?? task.tags;
     const newRecurrence = updates.recurrence ?? task.recurrence;
+    const newTimezone = updates.timezone ?? task.timezone;
 
     let newLine = `- [${newCompleted ? 'x' : ' '}] ${newContent}`;
     if (newPriority) newLine += ` !${newPriority}`;
     if (newDate) newLine += ` @${newDate}`;
     if (newRecurrence) newLine += ` @every(${newRecurrence})`;
+    if (newTimezone) newLine += ` @tz(${newTimezone})`;
     if (newTags?.length) newLine += ` ${newTags.map(tg => '#' + tg).join(' ')}`;
     
     lines[lineIndex] = newLine;
@@ -422,12 +507,8 @@ const App: React.FC = () => {
     }
 
     const content = dateTime ? `- [ ] ${text} @${dateTime}` : `- [ ] ${text}`;
-    let insertIdx = selectedFilter.type === 'project'
-      ? (() => {
-          const projectName = selectedFilter.value.split(' / ').pop()?.trim();
-          return projectName ? lines.findIndex(l => l.startsWith('#') && l.replace(/^#+\s*/, '').trim() === projectName) + 1 : -1;
-        })()
-      : lines.findIndex(l => l.includes('收件箱') || l.toLowerCase().includes('inbox')) + 1;
+    // 捕捉的灵感一律放入收件箱
+    let insertIdx = lines.findIndex(l => l.includes('收件箱') || l.toLowerCase().includes('inbox')) + 1;
     if (insertIdx <= 0) insertIdx = lines.findIndex(l => l.startsWith('#')) + 1;
     if (insertIdx <= 0) {
       lines.push(`# 📥 ${t.inbox}`, content);
@@ -499,10 +580,19 @@ const App: React.FC = () => {
       (l.match(/^#+/) || ['#'])[0].length === targetLevel
     );
 
+    // 若目标是固定 GTD 工作流但文件中尚无该标题，则在文件末尾追加该分区并放入任务
+    if (projectIdx === -1 && GTD_WORKFLOW_PATHS.includes(targetPath as typeof GTD_WORKFLOW_PATHS[number])) {
+      if (lines.length > 0 && lines[lines.length - 1].trim() !== '') lines.push('');
+      lines.push(`# ${targetName}`, ...taskLines);
+      saveToDisk(lines.join('\n'));
+      addToast(lang === 'zh' ? `已移至 ${targetName}` : `Moved to ${targetName}`, 'success');
+      return;
+    }
+
     if (projectIdx !== -1) {
       lines.splice(projectIdx + 1, 0, ...taskLines);
       saveToDisk(lines.join('\n'));
-      addToast(`Moved to ${targetName}`, 'success');
+      addToast(lang === 'zh' ? `已移至 ${targetName}` : `Moved to ${targetName}`, 'success');
     }
   };
 
@@ -619,8 +709,8 @@ const App: React.FC = () => {
   }, [projectGroups]);
 
   const ungroupedProjects = useMemo(() => 
-    projects.filter(p => !projectPathToGroupId[p.path]), 
-    [projects, projectPathToGroupId]
+    customProjects.filter(p => !projectPathToGroupId[p.path]), 
+    [customProjects, projectPathToGroupId]
   );
 
   const addGroup = useCallback(() => {
@@ -682,7 +772,7 @@ const App: React.FC = () => {
     if (name.includes('收件箱') || name.toLowerCase().includes('inbox')) return Inbox;
     if (name.includes('下一步') || name.toLowerCase().includes('next')) return Zap;
     if (name.includes('等待') || name.toLowerCase().includes('waiting')) return Hourglass;
-    if (name.includes('将来') || name.toLowerCase().includes('someday')) return Coffee;
+    if (name.includes('将来') || name.includes('未来也许') || name.toLowerCase().includes('someday')) return Coffee;
     return Hash;
   };
 
@@ -863,6 +953,51 @@ const App: React.FC = () => {
                 </button>
               </div>
             </div>
+            {/* 固定 GTD 工作流：收件箱、下一步行动、等待确认、将来/也许（支持拖入任务） */}
+            <div className="space-y-0.5 mb-4">
+              {GTD_WORKFLOW_PATHS.map(path => {
+                const label = path === '📥 收件箱' ? t.inbox : path === '⚡ 下一步行动' ? t.nextActions : path === '⏳ 等待确认' ? t.waitingFor : t.somedayMaybe;
+                const active = selectedFilter.type === 'project' && selectedFilter.value === path;
+                const workflowNode = projects.find(p => p.path === path);
+                const incompleteCount = workflowNode?.incompleteCount ?? 0;
+                const isDragOver = dragOverWorkflowPath === path;
+                return (
+                  <div
+                    key={path}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => { setSelectedFilter({ type: 'project', value: path }); setActiveView('view'); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedFilter({ type: 'project', value: path }); setActiveView('view'); } }}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverWorkflowPath(path); }}
+                    onDragLeave={() => setDragOverWorkflowPath(null)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOverWorkflowPath(null);
+                      try {
+                        const taskData = JSON.parse(e.dataTransfer.getData('task'));
+                        handleMoveTaskToProject(taskData.lineIndex, path);
+                      } catch (err) { console.error('Drop error:', err); }
+                    }}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left text-sm font-bold transition-all cursor-pointer",
+                      active ? "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50",
+                      isDragOver && "ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/30"
+                    )}
+                  >
+                    {React.createElement(getGTDIcon(path), { size: 18, className: active ? "text-blue-600 dark:text-blue-400" : "text-slate-400" })}
+                    <span className="truncate flex-1">{label}</span>
+                    {incompleteCount > 0 && (
+                      <span className={cn(
+                        "text-[10px] font-black px-1.5 py-0.5 rounded-full min-w-[20px] text-center shrink-0",
+                        active ? "bg-blue-500 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-400"
+                      )}>
+                        {incompleteCount}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
             {projectGroups.map(g => {
               const expanded = expandedFolderGroups[g.id] !== false;
               const isEditing = editingGroupId === g.id;
@@ -925,7 +1060,7 @@ const App: React.FC = () => {
                 </div>
               );
             })}
-            {(projectGroups.length > 0 ? ungroupedProjects : projects).length > 0 && (
+            {(projectGroups.length > 0 ? ungroupedProjects : customProjects).length > 0 && (
               <div className="mt-2">
                 {projectGroups.length > 0 && (
                   <div
@@ -938,7 +1073,7 @@ const App: React.FC = () => {
                   </div>
                 )}
                 <div className="space-y-0.5">
-                  {(projectGroups.length > 0 ? ungroupedProjects : projects).map(p => (
+                  {(projectGroups.length > 0 ? ungroupedProjects : customProjects).map(p => (
                     <div key={p.path} draggable onDragStart={(e) => handleProjectDragStart(e, p.path)} className="cursor-grab active:cursor-grabbing">
                       <ProjectItem
                         node={p}
@@ -1228,6 +1363,23 @@ const App: React.FC = () => {
                       <Moon size={18} /> {t.darkMode}
                     </button>
                   </div>
+                </section>
+                <section className="space-y-4">
+                  <h4 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">{t.timezone}</h4>
+                  <select
+                    value={userTimezone || ''}
+                    onChange={(e) => setUserTimezone(e.target.value)}
+                    className="w-full p-3 text-sm font-bold rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-700 text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-blue-500/30"
+                  >
+                    <option value="">{t.timezoneAuto}</option>
+                    <option value="UTC">UTC</option>
+                    <option value="Asia/Shanghai">Asia/Shanghai</option>
+                    <option value="Asia/Tokyo">Asia/Tokyo</option>
+                    <option value="America/New_York">America/New_York</option>
+                    <option value="America/Los_Angeles">America/Los_Angeles</option>
+                    <option value="Europe/London">Europe/London</option>
+                    <option value="Europe/Paris">Europe/Paris</option>
+                  </select>
                 </section>
               </div>
             </motion.div>

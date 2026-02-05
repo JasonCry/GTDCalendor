@@ -6,6 +6,7 @@ import { isBefore, parseISO, isValid, startOfDay } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Task } from '../types/gtd';
+import { useGtd } from '../context/GtdContext';
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
 
@@ -22,11 +23,44 @@ interface TaskCardProps {
   onMakeSubtask: (sourceIdx: number, targetIdx: number) => void;
 }
 
+const SWIPE_THRESHOLD = 60;
+
 const TaskCard: React.FC<TaskCardProps> = React.memo(({ 
   task, isBatchMode, selected, isActive, 
   onToggle, onDelete, onSelect, onOpenDetail, onDragStart, onMakeSubtask
 }) => {
+  const { lang } = useGtd();
   const [isSubtaskDropTarget, setIsSubtaskDropTarget] = React.useState(false);
+  const touchStart = React.useRef<{ x: number; y: number } | null>(null);
+  const didSwipeRef = React.useRef(false);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    didSwipeRef.current = false;
+  };
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (!touchStart.current) return;
+    const endX = e.changedTouches[0].clientX;
+    const endY = e.changedTouches[0].clientY;
+    const deltaX = endX - touchStart.current.x;
+    const deltaY = endY - touchStart.current.y;
+    touchStart.current = null;
+    if (Math.abs(deltaX) < SWIPE_THRESHOLD) return;
+    if (Math.abs(deltaY) > Math.abs(deltaX)) return;
+    didSwipeRef.current = true;
+    if (deltaX > SWIPE_THRESHOLD) {
+      onToggle(task.lineIndex, !task.completed);
+    } else if (deltaX < -SWIPE_THRESHOLD) {
+      onDelete(task.lineIndex);
+    }
+  };
+  const handleCardClick = () => {
+    if (didSwipeRef.current) {
+      didSwipeRef.current = false;
+      return;
+    }
+    onOpenDetail(task);
+  };
   const isOverdue = useMemo(() => {
     if (!task.date || task.completed) return false;
     try {
@@ -57,7 +91,9 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
         isActive && "border-blue-500 ring-4 ring-blue-500/10",
         selected && "border-blue-500 ring-2 ring-blue-500/20"
       )}
-      onClick={() => onOpenDetail(task)}
+      onClick={handleCardClick}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
     >
       <div className="flex min-h-[40px]">
         {/* 拖拽抓手：与卡片同色系，悬停略深 */}
@@ -94,13 +130,34 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
                 P{task.priority}
               </span>
             )}
+            {task.tags && task.tags.length > 0 && (
+              <div className="flex items-center gap-1 shrink-0 flex-wrap">
+                {task.tags.slice(0, 3).map(tag => (
+                  <span key={tag} className="text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/80 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-600">
+                    #{tag}
+                  </span>
+                ))}
+                {task.tags.length > 3 && (
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500">+{task.tags.length - 3}</span>
+                )}
+              </div>
+            )}
             <h4 className={cn(
-              "font-bold text-[13px] truncate leading-snug flex-1",
+              "font-bold text-[13px] truncate leading-snug flex-1 min-w-0",
               task.completed ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"
             )}>
               {task.content}
             </h4>
             <div className="flex items-center gap-2 shrink-0 ml-auto">
+              {task.recurrence && (
+                <span
+                  className="flex items-center gap-0.5 text-[10px] font-bold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/30 px-1.5 py-0.5 rounded border border-violet-200 dark:border-violet-800"
+                  title={lang === 'zh' ? (task.recurrence === 'day' ? '每天重复' : task.recurrence === 'week' ? '每周重复' : '每月重复') : (task.recurrence === 'day' ? 'Repeats daily' : task.recurrence === 'week' ? 'Repeats weekly' : 'Repeats monthly')}
+                >
+                  <Repeat size={10} strokeWidth={2.5} />
+                  {lang === 'zh' ? (task.recurrence === 'day' ? '每天' : task.recurrence === 'week' ? '每周' : '每月') : (task.recurrence === 'day' ? 'Daily' : task.recurrence === 'week' ? 'Weekly' : 'Monthly')}
+                </span>
+              )}
               {task.date && (
                 <div className={cn("text-[10px] font-bold flex items-center gap-1 px-1 py-0.5 rounded", isOverdue ? "text-rose-500 bg-rose-50 dark:bg-rose-500/10" : "text-blue-500/80 bg-blue-50/50 dark:bg-blue-500/10")}>
                   <Clock size={10} />

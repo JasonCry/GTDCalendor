@@ -10,6 +10,17 @@ import { Task, Priority, Recurrence } from '../types/gtd';
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
 
+const TIMEZONE_OPTIONS = [
+  { value: '', labelKey: 'timezoneFixedTime', group: 'fixedTime' },
+  { value: 'UTC', label: 'UTC', group: 'fixedTz' },
+  { value: 'Asia/Shanghai', label: 'Asia/Shanghai', group: 'fixedTz' },
+  { value: 'Asia/Tokyo', label: 'Asia/Tokyo', group: 'fixedTz' },
+  { value: 'America/New_York', label: 'America/New_York', group: 'fixedTz' },
+  { value: 'America/Los_Angeles', label: 'America/Los_Angeles', group: 'fixedTz' },
+  { value: 'Europe/London', label: 'Europe/London', group: 'fixedTz' },
+  { value: 'Europe/Paris', label: 'Europe/Paris', group: 'fixedTz' }
+];
+
 interface InspectorProps {
   task: Task;
   onUpdate: (lineIndex: number, updates: any) => void;
@@ -26,7 +37,8 @@ const Inspector: React.FC<InspectorProps> = ({
     priority: null as Priority,
     tags: '',
     date: '',
-    recurrence: null as Recurrence
+    recurrence: null as Recurrence,
+    timezone: '' as string
   });
 
   useEffect(() => {
@@ -36,7 +48,8 @@ const Inspector: React.FC<InspectorProps> = ({
         priority: task.priority,
         tags: task.tags.join(' '),
         date: task.date || '',
-        recurrence: task.recurrence
+        recurrence: task.recurrence,
+        timezone: task.timezone || ''
       });
     }
   }, [task]);
@@ -51,13 +64,15 @@ const Inspector: React.FC<InspectorProps> = ({
           formData.priority !== task.priority ||
           formData.date !== task.date ||
           formData.recurrence !== task.recurrence ||
+          formData.timezone !== (task.timezone || '') ||
           tagsArray.join(' ') !== task.tags.join(' ');
 
         if (hasChanged) {
           onUpdate(task.lineIndex, {
             ...formData,
             tags: tagsArray,
-            date: formData.date || null
+            date: formData.date || null,
+            timezone: formData.timezone || null
           });
         }
       }
@@ -187,6 +202,24 @@ const Inspector: React.FC<InspectorProps> = ({
                 <option value="day">Every Day</option>
                 <option value="week">Every Week</option>
                 <option value="month">Every Month</option>
+              </select>
+          </div>
+
+          <div className="space-y-3">
+             <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">
+               <Clock size={12}/> {t.timezone}
+             </div>
+             <select 
+                value={formData.timezone}
+                onChange={(e) => setFormData(prev => ({ ...prev, timezone: e.target.value }))}
+                className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-2xl text-[13px] font-bold outline-none focus:ring-4 focus:ring-blue-500/5 transition-all appearance-none cursor-pointer dark:text-slate-200"
+              >
+                <option value="">{t.timezoneFixedTime}</option>
+                <optgroup label={t.timezoneFixedTz}>
+                  {TIMEZONE_OPTIONS.filter(o => o.group === 'fixedTz').map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </optgroup>
               </select>
           </div>
 
