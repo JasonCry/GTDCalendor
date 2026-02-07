@@ -2,6 +2,87 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0.10] - 2026-02-07
+
+### Fix：任务到时间提醒未起效
+- **先等权限再检查**：在挂载时先 `await requestNotificationPermission()`，再执行第一次提醒检查并启动轮询，避免首次检查时权限尚未返回而漏提醒。
+- **轮询间隔**：由 60 秒改为 **30 秒**，更容易在设定时间附近触发系统通知。
+- **时区回退**：未在 `TZ_OFFSET_MINUTES` 中的时区改为使用当前系统时区 `getTimezoneOffset()`，避免被当成 UTC 导致提醒时间错位。
+- **始终请求权限**：去掉「仅当 `innerWidth > 768` 才请求通知权限」的限制，小窗口也会请求权限。
+- **权限被拒提示**：若在 Tauri 下请求后仍未获得通知权限，会弹出一次 Toast，提示在「系统设置 → 通知」中允许 GTD Flow。
+
+## [0.3.0.9] - 2026-02-07
+
+### Bug：提醒以系统通知方式生效 (Tauri)
+- **问题**：设置的提醒时间到了时没有以系统通知提醒。
+- **实现**：
+  - 接入 **tauri-plugin-notification**：后端 `Cargo.toml` 与 `lib.rs` 增加插件，capabilities 增加 `notification:default`；前端安装 `@tauri-apps/plugin-notification`。
+  - **权限**：Tauri 下使用插件的 `isPermissionGranted` / `requestPermission` 请求系统通知权限，状态存于 `notificationGrantedRef`；非 Tauri 仍用 Web `Notification` API。
+  - **发送**：到达提醒时间时，Tauri 下调用 `sendNotification({ title, body })` 发送系统级通知；否则使用 `new Notification(...)`。
+  - **触发窗口**：由「仅提前 10 分钟内」改为「提前 10 分钟内或到达后 15 分钟内」触发一次，避免整点未轮询到而漏提醒；首次挂载立即执行一次检查，之后每 60 秒轮询。
+
+## [0.3.0.8] - 2026-02-07
+
+### Tauri：窗口与程序坞图标
+- **窗口图标**：在 `lib.rs` 的 `setup()` 中，获取主窗口后从资源目录读取 `icons/32x32.png`（或 Windows 下 `icon.ico`），通过 `tauri::image::Image::from_path` 加载并调用 `window.set_icon(img)`，使标题栏与开发模式下窗口显示应用图标。
+- **依赖**：为 tauri 启用 `image-png`、`image-ico` 特性以支持从路径加载图标；引入 `tauri::Manager` 以使用 `get_webview_window`、`path().resource_dir()`。
+- **bundle**：`tauri.conf.json` 的 `bundle.icon` 中增加 `icons/icon.icns`、`icons/icon.ico`，打包后的 .app（macOS）与安装包会使用这些图标，程序坞与任务栏显示一致图标。
+
+## [0.3.0.7] - 2026-02-07
+
+### 优化：任务更紧凑、子任务行按需显示
+- **任务高度**：主任务行 `min-h` 40px→32px，内边距缩小（py-2→py-1.5、px-2.5→px-2）；子任务行 36px→28px；卡片间距 mb-1→mb-0.5，圆角 rounded-xl→rounded-lg；标题 13px→12px。
+- **子任务放置区**：不再常驻占高。默认仅保留极窄可命中区（约 3px），拖拽任务或悬停任务卡时再展开为可放置高度；放置时仍为明显高亮区域。Tauri 通过 `isDraggingAnyTask={isSubtaskDragging || pointerDragActive}` 控制，React 通过 `isDraggingAnyTask={isSubtaskDragging}`。gtd-tauri 与 gtd-react-app 的 TaskCard 已同步上述逻辑。
+
+## [0.3.0.6] - 2026-02-07
+
+### Bug：Toast「已转为子任务」不消失
+- **原因**：Toast 使用 `id = Date.now()`，在 Tauri/WebView 下若同一毫秒内多次更新或定时器未按预期执行，可能导致 3 秒后 `filter(t => t.id !== id)` 无法正确移除对应项。
+- **修改**（gtd-tauri GtdContext）：(1) Toast `id` 改为字符串 `\`${Date.now()}-${random}\``，保证唯一；(2) 增加 `createdAt`，新 toast 加入时顺带移除超过 4 秒的旧 toast，作为定时器未触发时的兜底；(3) 将 setTimeout 句柄存入 ref，在 Provider 卸载时统一 clearTimeout，避免悬空定时器。
+
+## [0.3.0.5] - 2026-02-07
+
+### Tauri: 指针拖拽 + 性能
+- **不再依赖 HTML5 DnD**：在 Tauri 下改为纯指针事件实现拖拽。拖拽手柄用 `onPointerDown` 启动，`document` 上监听 `pointermove`/`pointerup`，通过 `elementsFromPoint` 判定放置目标（`data-drop`/`data-drop-path`/`data-drop-target-line`），执行移动/转为子任务。彻底避免 WebView 中 `dataTransfer` 不可用或拖拽无响应的问题。
+- **拖拽过程不重渲染**：移动时只更新浮层位置（`overlayRef.current.style.transform`），高亮通过直接改目标元素 `classList`，不在拖拽中更新 React 状态，避免整树重绘、提升响应。
+- **放置区**：侧栏工作流、项目、任务行、子任务放置区均增加 `data-drop*`，Tauri 下关闭其 HTML5 `onDragOver`/`onDrop`，统一由指针逻辑处理。
+
+## [0.3.0.4] - 2026-02-07
+
+### Tauri: 拖拽在 WebView 下可靠生效（ref 回退）
+- **问题**：在 Tauri 的 WebView（如 macOS WKWebView）中，`drop` 事件里 `dataTransfer.getData()` 常返回空，导致「拖到左侧清单」和「拖拽子任务」无效。
+- **实现**：
+  - 在 App 中增加 `dragPayloadRef`，在 `onDragStart` 时写入当前拖拽任务的 `{ lineIndex, lineCount, isSubtask }`，在 `onDragEnd` 时清空。
+  - `getTaskDataFromTransfer(dt)` 先尝试从 `dt.getData('task'|'text/plain'|'application/json')` 解析，若为空或解析失败则返回 `dragPayloadRef.current`，保证 drop 时一定能拿到数据。
+  - TaskCard、ProjectItem 增加可选 prop `getDraggedTaskData`，由 App 传入 `getTaskDataFromTransfer`；其 `onDrop` 中通过该 getter 取数据，在 WebView 下即从 ref 回退拿到 payload，从而「转为子任务」和「拖到侧栏项目」均可正常执行。
+
+## [0.3.0.3] - 2026-02-07
+
+### 拖拽与 React 功能对齐 (Todo: 全面实现)
+- **Tauri 与 React 拖放统一**：所有可放置目标在 `onDragOver` 中设置 `e.dataTransfer.dropEffect = 'move'`（侧栏工作流、ProjectItem、任务卡子任务放置区），便于 WebView/浏览器接受放置。
+- **多种 MIME 回退**：拖拽时同时设置 `task`、`text/plain`、`application/json`；放置时按该顺序读取，保证在 Tauri 与严格环境下都能拿到数据。
+- **子任务放置区**：与 React 一致，子任务放置区使用 `min-h-[24px]` 和默认边框，便于拖放命中。
+- **gtd-react-app**：同步上述拖放逻辑（getTaskDataFromTransfer、dropEffect、多类型回退、子任务区样式），两套代码行为一致。
+
+## [0.3.0.2] - 2026-02-07
+
+### Tauri: 拖拽转为子任务 + 应用图标 (Todo V0.3.0)
+- **拖拽转为子任务**：在 Tauri/WebView 中部分环境仅在 drop 时暴露 `text/plain`。现在在 `onDragStart` 中同时设置 `task` 与 `text/plain`，在 drop 时优先读取 `task`、若无则读 `text/plain`，保证拖拽到「转为子任务」区域可用。子任务放置区增加最小高度与默认边框，便于拖放命中。
+- **应用图标**：新增 `gtd-tauri/icon.svg`（蓝底白勾），并用 `npx tauri icon icon.svg` 生成各平台图标至 `src-tauri/icons/`（含 macOS/Windows/iOS/Android 等）。
+
+## [0.3.0.1] - 2026-02-07
+
+### Performance (Tauri / gtd-tauri) — Todo V0.3.0 Debug
+- **Drag-over throttling**: `setDragOverTaskId` is now updated at most once per animation frame (via `requestAnimationFrame`) during drag, avoiding hundreds of full App re-renders per second when moving over many task cards. This fixes the issue where the app was too slow to drag a task into a subtask.
+- **Non-blocking save**: Markdown updates from `saveToDisk` are wrapped in `React.startTransition` so that the heavy re-parse and list re-render do not block the UI; the drop feedback remains immediate.
+- **List animation**: Removed `layout` from the task list `motion.div` to reduce layout thrashing during drag and reorder.
+
+## [0.2.10] - 2026-02-04
+
+### Timed reminder (Todo V0.2.6)
+- **Task reminder**: Tasks now support an optional **reminder** date/time, separate from the schedule date. In the Inspector, a "Reminder" section (Bell icon) with date and time inputs lets you set when to be notified. Stored in markdown as `@remind(YYYY-MM-DD HH:mm)`.
+- **Notifications**: If a reminder is set, the app shows a browser notification when that time is within the next 10 minutes (same 1‑minute polling as before). If no reminder is set, the existing behaviour remains: notification when the task’s schedule time (date+time) is within 10 minutes. Reminder time is interpreted using the task’s timezone (or app default).
+
 ## [0.2.9] - 2026-02-04
 
 ### Subtask drag-to-promote: blue insertion line

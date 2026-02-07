@@ -1,0 +1,1 @@
+{"identifier":"default","description":"Allow main window to use GTD Flow and dialog.","windows":["*"],"permissions":["core:default","core:path:default","dialog:allow-open","dialog:allow-save","notification:default"]}

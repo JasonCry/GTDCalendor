@@ -26,6 +26,12 @@ interface TaskCardProps {
   onOpenSubtaskDetail?: (lineIndex: number) => void;
   isSubtaskDragging?: boolean;
   isPromoteDropTarget?: boolean;
+  /** Tauri/WebView 下 drop 时 dataTransfer 可能为空，用此回调取拖拽数据 */
+  getDraggedTaskData?: (dt: DataTransfer) => { lineIndex: number; lineCount?: number; isSubtask?: boolean } | null;
+  /** Tauri 专用：用指针事件拖拽，不依赖 HTML5 DnD */
+  usePointerDrag?: boolean;
+  onPointerDragStart?: (task: Task, clientX?: number, clientY?: number) => void;
+  /** 是否有任务正在被拖拽（用于按需显示子任务放置区） */
   isDraggingAnyTask?: boolean;
 }
 
@@ -33,11 +39,11 @@ const SWIPE_THRESHOLD = 60;
 
 const TaskCard: React.FC<TaskCardProps> = React.memo(({ 
   task, isBatchMode, selected, isActive, 
-  onToggle, onDelete, onSelect, onOpenDetail, onDragStart, onDragEnd, onMakeSubtask, onPromoteSubtask, onOpenSubtaskDetail, isSubtaskDragging, isPromoteDropTarget, isDraggingAnyTask
+  onToggle, onDelete, onSelect, onOpenDetail, onDragStart, onDragEnd, onMakeSubtask, onPromoteSubtask, onOpenSubtaskDetail, isSubtaskDragging, isPromoteDropTarget, getDraggedTaskData, usePointerDrag, onPointerDragStart, isDraggingAnyTask
 }) => {
   const { lang } = useGtd();
   const [isSubtaskDropTarget, setIsSubtaskDropTarget] = React.useState(false);
-  const showSubtaskZone = (isDraggingAnyTask ?? isSubtaskDragging) || isSubtaskDropTarget;
+  const showSubtaskZone = isDraggingAnyTask || isSubtaskDropTarget;
   const touchStart = React.useRef<{ x: number; y: number } | null>(null);
   const didSwipeRef = React.useRef(false);
 
@@ -115,23 +121,24 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
       onTouchEnd={handleTouchEnd}
     >
       {showPromoteHint && (
-        <div className="flex items-center justify-center gap-2 py-1.5 px-3 bg-blue-500/15 dark:bg-blue-500/20 border-b border-blue-400/40 text-blue-700 dark:text-blue-300 text-xs font-bold">
+        <div className="flex items-center justify-center gap-2 py-1 px-2.5 bg-blue-500/15 dark:bg-blue-500/20 border-b border-blue-400/40 text-blue-700 dark:text-blue-300 text-[11px] font-bold">
           <CornerUpLeft size={14} strokeWidth={2.5} />
           {lang === 'zh' ? '松开即可提升为独立任务' : 'Drop to promote to task'}
         </div>
       )}
       <div className="flex min-h-[32px]">
-        {/* 拖拽抓手：与卡片同色系，悬停略深 */}
+        {/* 拖拽抓手：Tauri 下用指针事件，否则用 HTML5 draggable */}
         <div 
           className="w-7 flex items-center justify-center rounded-l-xl cursor-grab active:cursor-grabbing shrink-0 bg-slate-100 dark:bg-slate-700/80 text-slate-500 dark:text-slate-400 hover:bg-slate-200 hover:text-slate-600 dark:hover:bg-slate-600 dark:hover:text-slate-300 transition-colors"
-          draggable
-          onDragStart={(e) => {
+          draggable={!usePointerDrag}
+          onPointerDown={usePointerDrag && onPointerDragStart ? (e) => { e.preventDefault(); e.stopPropagation(); onPointerDragStart(task, e.clientX, e.clientY); } : undefined}
+          onDragStart={!usePointerDrag ? (e) => {
              e.stopPropagation();
              const card = e.currentTarget.closest('.task-card-root');
              if (card) e.dataTransfer.setDragImage(card, 10, 10);
              onDragStart(e, task);
-          }}
-          onDragEnd={() => onDragEnd?.()}
+          } : undefined}
+          onDragEnd={!usePointerDrag ? () => onDragEnd?.() : undefined}
         >
           <GripVertical size={14} strokeWidth={2.5} />
         </div>
@@ -204,17 +211,18 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
 
       {/* Subtasks Section */}
       {task.subtasks && task.subtasks.length > 0 && (
-        <div className="ml-7 border-l-2 border-slate-100 dark:border-slate-700">
+        <div className="ml-6 border-l-2 border-slate-100 dark:border-slate-700">
           {task.subtasks.map((sub) => (
             <div key={sub.lineIndex} className="flex min-h-[28px] border-t border-slate-100 dark:border-slate-700/50">
               <div 
                 className="w-7 flex items-center justify-center cursor-grab active:cursor-grabbing shrink-0 text-slate-400 dark:text-slate-500 bg-slate-50/80 dark:bg-slate-800/50 hover:bg-slate-200 hover:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-400 transition-colors"
-                draggable
-                onDragStart={(e) => {
+                draggable={!usePointerDrag}
+                onPointerDown={usePointerDrag && onPointerDragStart ? (e) => { e.preventDefault(); e.stopPropagation(); onPointerDragStart({ ...task, lineIndex: sub.lineIndex, content: sub.content, lineCount: 1, isSubtask: true } as Task, e.clientX, e.clientY); } : undefined}
+                onDragStart={!usePointerDrag ? (e) => {
                   e.stopPropagation();
                   onDragStart(e, { ...task, lineIndex: sub.lineIndex, content: sub.content, lineCount: 1, isSubtask: true } as any);
-                }}
-                onDragEnd={() => onDragEnd?.()}
+                } : undefined}
+                onDragEnd={!usePointerDrag ? () => onDragEnd?.() : undefined}
               >
                 <GripVertical size={12} strokeWidth={2.5} />
               </div>
@@ -277,22 +285,29 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
         </div>
       )}
 
-      {/* 📥 NESTING DROP ZONE: 仅在拖拽或悬停时占高 */}
+      {/* 📥 NESTING DROP ZONE: 仅在拖拽或悬停时占高，平时仅保留极窄可命中区 */}
       <div 
+        data-drop="subtask"
+        data-drop-target-line={String(task.lineIndex)}
         onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setIsSubtaskDropTarget(true); }}
         onDragLeave={() => setIsSubtaskDropTarget(false)}
         onDrop={(e) => {
           e.preventDefault();
           e.stopPropagation();
           setIsSubtaskDropTarget(false);
-          const raw = e.dataTransfer.getData('task') || e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('application/json');
-          if (!raw) return;
-          try {
-            const taskData = JSON.parse(raw);
-            if (taskData.lineIndex !== task.lineIndex) {
-              onMakeSubtask(taskData.lineIndex, task.lineIndex);
-            }
-          } catch (err) { console.error('Subtask drop error:', err); }
+          const taskData = getDraggedTaskData
+            ? getDraggedTaskData(e.dataTransfer)
+            : (() => {
+                const raw = e.dataTransfer.getData('task') || e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('application/json');
+                if (!raw) return null;
+                try {
+                  return JSON.parse(raw);
+                } catch {
+                  return null;
+                }
+              })();
+          if (!taskData || taskData.lineIndex === task.lineIndex) return;
+          onMakeSubtask(taskData.lineIndex, task.lineIndex);
         }}
         className={cn(
           "ml-10 mt-0.5 rounded-lg transition-all duration-200 flex items-center justify-center border-2 border-dashed",

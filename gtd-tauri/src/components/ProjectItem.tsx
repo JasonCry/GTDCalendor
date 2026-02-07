@@ -16,11 +16,13 @@ interface ProjectItemProps {
   onRename: (path: string, newName: string) => void;
   onDelete: (path: string) => void;
   onDropTask: (idx: number, targetPath: string) => void;
+  /** Tauri/WebView 下 drop 时 dataTransfer 可能为空，用此回调取拖拽数据 */
+  getDraggedTaskData?: (dt: DataTransfer) => { lineIndex: number; lineCount?: number } | null;
 }
 
 const ProjectItem: React.FC<ProjectItemProps> = ({ 
   node, expanded, active, icon: Icon, 
-  onToggle, onSelect, onRename, onDelete, onDropTask 
+  onToggle, onSelect, onRename, onDelete, onDropTask, getDraggedTaskData 
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(node.name);
@@ -44,19 +46,25 @@ const ProjectItem: React.FC<ProjectItemProps> = ({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    try {
-      const raw = e.dataTransfer.getData('task') || e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('application/json');
-      if (!raw) return;
-      const taskData = JSON.parse(raw);
-      onDropTask(taskData.lineIndex, node.path);
-    } catch (err) {
-      console.error('Drop error:', err);
-    }
+    const taskData = getDraggedTaskData
+      ? getDraggedTaskData(e.dataTransfer)
+      : (() => {
+          const raw = e.dataTransfer.getData('task') || e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('application/json');
+          if (!raw) return null;
+          try {
+            return JSON.parse(raw);
+          } catch {
+            return null;
+          }
+        })();
+    if (taskData != null) onDropTask(taskData.lineIndex, node.path);
   };
 
   return (
     <div className="group/proj relative">
       <div 
+        data-drop="project"
+        data-drop-path={node.path}
         className={cn(
           "flex items-center gap-3 px-3 py-2 rounded-2xl cursor-pointer transition-all duration-300 border border-transparent mb-0.5",
           active 

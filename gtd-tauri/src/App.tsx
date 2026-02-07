@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, useTransition } from 'react';
 import { 
   CheckCircle2, Plus, Menu, ListTodo, ChevronLeft, Clock, Trash2, X, Calendar as CalendarIcon,
   Search, Sun, Moon, BarChart2, Layers, Settings, Languages, Pause, Play, Square, Inbox, Zap, Coffee, Hourglass, Hash,
@@ -13,6 +13,17 @@ import { useGtd } from './context/GtdContext';
 import { useGtdParser } from './hooks/useGtdParser';
 import { getFileHandle, saveFileHandle, removeFileHandle } from './utils/fileStorage';
 import { fetchMarkdown, pushMarkdown } from './utils/syncApi';
+import {
+  isTauri,
+  tauriReadMarkdown,
+  tauriWriteMarkdown,
+  tauriGetDefaultStorePath,
+  tauriSetDefaultStorePath,
+  tauriOpenFileDialog,
+  tauriSaveFileDialog,
+  tauriReadFileAtPath,
+  tauriWriteFileAtPath,
+} from './utils/tauriStorage';
 import TaskCard from './components/TaskCard';
 import ProjectItem from './components/ProjectItem';
 import Inspector from './components/Inspector';
@@ -43,7 +54,10 @@ const App: React.FC = () => {
     toasts, addToast, pomoState, setPomoState, syncStatus, setSyncStatus, t
   } = useGtd();
 
-  const [markdown, setMarkdown] = useState(localStorage.getItem('gtd-markdown') || DEFAULT_GTD_TEMPLATE);
+  const [markdown, setMarkdown] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_GTD_TEMPLATE;
+    return localStorage.getItem('gtd-markdown') || DEFAULT_GTD_TEMPLATE;
+  });
   const [newTaskInput, setNewTaskInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -73,8 +87,26 @@ const App: React.FC = () => {
   const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null);
 
   const mainInputRef = useRef<HTMLInputElement>(null);
+  const [, startTransition] = useTransition();
   const syncModeRef = useRef(false);
   syncModeRef.current = syncMode;
+  const dragOverTaskIdRef = useRef<string | null>(null);
+  const dragOverRafRef = useRef<number | null>(null);
+  /** Tauri/WebView 下 drop 时 dataTransfer.getData 可能为空，用 ref 保存拖拽中的数据供 drop 使用 */
+  const dragPayloadRef = useRef<{ lineIndex: number; lineCount?: number; isSubtask?: boolean } | null>(null);
+  /** Tauri 专用：指针拖拽不依赖 HTML5 DnD，用 ref 存当前拖拽任务与 overlay 位置，拖拽过程不触发重渲染 */
+  const pointerDragTaskRef = useRef<Task | null>(null);
+  const pointerDragOverlayRef = useRef<HTMLDivElement | null>(null);
+  const pointerDragLastDropRef = useRef<Element | null>(null);
+  const pointerDragPosRef = useRef({ x: 0, y: 0 });
+  const [pointerDragActive, setPointerDragActive] = useState(false);
+  const [pointerDragTask, setPointerDragTask] = useState<Task | null>(null);
+  const pointerDragHandlersRef = useRef<{
+    handleMoveTaskToProject: (idx: number, path: string) => void;
+    handleMakeSubtask: (source: number, target: number) => void;
+    saveToDisk: (content: string) => void;
+    markdown: string;
+  }>(null as any);
   const notificationRequestedRef = useRef(false);
   const checkTaskNotificationsRef = useRef<() => void>(() => {});
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -83,6 +115,7 @@ const App: React.FC = () => {
   const notificationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const notifiedTaskIdsRef = useRef<Set<string>>(new Set());
   const currentFileHandle = useRef<any>(null);
+  const currentFilePathRef = useRef<string | null>(null);
 
   const { projects, allTasks } = useGtdParser(markdown, t);
 
@@ -96,15 +129,20 @@ const App: React.FC = () => {
     'Europe/Paris': 1 * 60
   };
 
+  /** 未知时区时使用当前系统时区偏移（便于提醒时间正确） */
+  const getOffsetMinutes = useCallback((tz: string) => {
+    return TZ_OFFSET_MINUTES[tz] ?? -new Date().getTimezoneOffset();
+  }, []);
+
   const getTaskMomentUtc = useCallback((task: Task): number | null => {
     if (!task.date?.includes(' ')) return null;
     const [datePart, timePart] = task.date.split(' ');
     const [y, m, d] = datePart.split('-').map(Number);
     const [h, min] = timePart.split(':').map(Number);
     const tz = task.timezone || effectiveTimezone;
-    const offsetMin = TZ_OFFSET_MINUTES[tz] ?? 0;
+    const offsetMin = getOffsetMinutes(tz);
     return Date.UTC(y, m - 1, d, h, min, 0) - offsetMin * 60 * 1000;
-  }, [effectiveTimezone]);
+  }, [effectiveTimezone, getOffsetMinutes]);
 
   /** Parse "YYYY-MM-DD HH:mm" in task timezone to UTC ms (for reminder) */
   const getReminderMomentUtc = useCallback((task: Task): number | null => {
@@ -114,9 +152,9 @@ const App: React.FC = () => {
     const [y, m, d] = datePart.split('-').map(Number);
     const [h, min] = timePart.split(':').map(Number);
     const tz = task.timezone || effectiveTimezone;
-    const offsetMin = TZ_OFFSET_MINUTES[tz] ?? 0;
+    const offsetMin = getOffsetMinutes(tz);
     return Date.UTC(y, m - 1, d, h, min, 0) - offsetMin * 60 * 1000;
-  }, [effectiveTimezone]);
+  }, [effectiveTimezone, getOffsetMinutes]);
 
   const formatPomoTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -224,55 +262,95 @@ const App: React.FC = () => {
     };
   }, [pomoState.isActive, setPomoState, addToast, lang]);
 
+  const notificationGrantedRef = useRef(false);
+  const permissionDeniedToastShownRef = useRef(false);
+
   const requestNotificationPermission = useCallback(async () => {
+    if (isTauri()) {
+      try {
+        const notif = await import('@tauri-apps/plugin-notification');
+        let granted = await notif.isPermissionGranted();
+        if (!granted) {
+          const p = await notif.requestPermission();
+          granted = p === 'granted';
+        }
+        notificationGrantedRef.current = granted;
+      } catch (_) {
+        notificationGrantedRef.current = false;
+      }
+      return;
+    }
     if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
       await Notification.requestPermission();
     }
+    notificationGrantedRef.current = typeof Notification !== 'undefined' && Notification.permission === 'granted';
   }, []);
 
-  const checkTaskNotifications = useCallback(() => {
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const checkTaskNotifications = useCallback(async () => {
+    if (isTauri() && !notificationGrantedRef.current) {
+      try {
+        const notif = await import('@tauri-apps/plugin-notification');
+        notificationGrantedRef.current = await notif.isPermissionGranted();
+      } catch (_) {}
+    }
+    const hasPermission = isTauri()
+      ? notificationGrantedRef.current
+      : (typeof Notification !== 'undefined' && Notification.permission === 'granted');
+    if (!hasPermission) return;
     const now = Date.now();
-    allTasks.forEach((task: Task) => {
-      if (task.completed || notifiedTaskIdsRef.current.has(task.id)) return;
+    const title = lang === 'zh' ? '任务提醒 | GTD Flow' : 'Task reminder | GTD Flow';
+    for (const task of allTasks) {
+      if (task.completed || notifiedTaskIdsRef.current.has(task.id)) continue;
       const reminder = (task as { reminder?: string | null }).reminder;
       const reminderUtc = reminder?.includes(' ') ? getReminderMomentUtc(task) : null;
       const taskUtc = task.date?.includes(' ') ? getTaskMomentUtc(task) : null;
       const useReminder = reminderUtc != null;
       const useSchedule = !useReminder && taskUtc != null;
       const targetUtc = useReminder ? reminderUtc! : useSchedule ? taskUtc! : null;
-      if (targetUtc == null) return;
+      if (targetUtc == null) continue;
       const diffMinutes = (targetUtc - now) / (1000 * 60);
-      if (diffMinutes > 0 && diffMinutes <= 10) {
+      // 提醒时间到达前 10 分钟内或到达后 15 分钟内触发一次系统通知
+      if (diffMinutes <= 10 && diffMinutes > -15) {
         try {
           const timeStr = useReminder ? (reminder!.split(' ')[1] || '') : (task.date!.split(' ')[1] || '');
           const msg = useReminder
             ? (lang === 'zh' ? `提醒: "${task.content}" (${timeStr})` : `Reminder: "${task.content}" (${timeStr})`)
             : (lang === 'zh' ? `任务 "${task.content}" 即将开始 (${timeStr})` : `Task "${task.content}" starting soon (${timeStr})`);
-          new Notification(lang === 'zh' ? '任务提醒 | GTD Flow' : 'Task reminder | GTD Flow', { body: msg });
+          if (isTauri()) {
+            const notif = await import('@tauri-apps/plugin-notification');
+            await notif.sendNotification({ title, body: msg });
+          } else {
+            new Notification(title, { body: msg });
+          }
           notifiedTaskIdsRef.current.add(task.id);
           addToast(lang === 'zh' ? `提醒: ${task.content}` : `Reminder: ${task.content}`, 'info');
         } catch (_) {}
       }
-    });
+    }
   }, [allTasks, getTaskMomentUtc, getReminderMomentUtc, addToast, lang]);
   checkTaskNotificationsRef.current = checkTaskNotifications;
 
   useEffect(() => {
     if (!notificationRequestedRef.current) {
       notificationRequestedRef.current = true;
-      if (typeof window !== 'undefined' && window.innerWidth > 768) {
-        requestNotificationPermission();
-      }
     }
-    notificationIntervalRef.current = setInterval(() => checkTaskNotificationsRef.current(), 60000);
+    const run = () => { checkTaskNotificationsRef.current()?.catch(() => {}); };
+    (async () => {
+      await requestNotificationPermission();
+      if (isTauri() && !notificationGrantedRef.current && !permissionDeniedToastShownRef.current) {
+        permissionDeniedToastShownRef.current = true;
+        addToast(lang === 'zh' ? '请在「系统设置 → 通知」中允许 GTD Flow 发送任务提醒' : 'Enable notifications for GTD Flow in System Settings to get task reminders.', 'info');
+      }
+      run();
+    })();
+    notificationIntervalRef.current = setInterval(run, 30000);
     return () => {
       if (notificationIntervalRef.current) {
         clearInterval(notificationIntervalRef.current);
         notificationIntervalRef.current = null;
       }
     };
-  }, [requestNotificationPermission]);
+  }, [requestNotificationPermission, addToast, lang]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches) {
@@ -301,6 +379,21 @@ const App: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (isTauri()) {
+        try {
+          const content = await tauriReadMarkdown();
+          if (cancelled) return;
+          setMarkdown(content);
+          const path = await tauriGetDefaultStorePath();
+          if (cancelled) return;
+          currentFilePathRef.current = path;
+          setHasCurrentFile(!!path);
+          setIsDefaultFile(!!path);
+        } catch (e) {
+          console.error('Tauri read_markdown:', e);
+        }
+        return;
+      }
       const remote = await fetchMarkdown();
       if (cancelled) return;
       if (remote !== null) {
@@ -352,6 +445,22 @@ const App: React.FC = () => {
   }, []);
 
   const handleOpenFile = useCallback(async () => {
+    if (isTauri()) {
+      try {
+        const path = await tauriOpenFileDialog();
+        if (!path) return;
+        const content = await tauriReadFileAtPath(path);
+        setMarkdown(content);
+        await tauriSetDefaultStorePath(path);
+        currentFilePathRef.current = path;
+        setHasCurrentFile(true);
+        setIsDefaultFile(true);
+        addToast(lang === 'zh' ? '文件已打开' : 'File opened', 'success');
+      } catch (err) {
+        console.error(err);
+      }
+      return;
+    }
     try {
       const [handle] = await window.showOpenFilePicker({ types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }], multiple: false });
       await loadFileContent(handle);
@@ -362,6 +471,21 @@ const App: React.FC = () => {
   }, [loadFileContent, addToast, lang]);
 
   const handleSaveAs = useCallback(async () => {
+    if (isTauri()) {
+      try {
+        const path = await tauriSaveFileDialog();
+        if (!path) return;
+        await tauriWriteFileAtPath(path, markdown);
+        await tauriSetDefaultStorePath(path);
+        currentFilePathRef.current = path;
+        setHasCurrentFile(true);
+        setIsDefaultFile(true);
+        addToast(lang === 'zh' ? '另存为成功' : 'Saved as', 'success');
+      } catch (err) {
+        console.error(err);
+      }
+      return;
+    }
     try {
       const handle = await window.showSaveFilePicker({ types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }] });
       const writable = await handle.createWritable();
@@ -375,6 +499,19 @@ const App: React.FC = () => {
   }, [markdown, loadFileContent, addToast, lang]);
 
   const toggleDefaultFile = useCallback(async () => {
+    if (isTauri()) {
+      if (!currentFilePathRef.current) return;
+      if (isDefaultFile) {
+        await tauriSetDefaultStorePath(null);
+        setIsDefaultFile(false);
+        addToast(lang === 'zh' ? '已取消默认文件' : 'Unset default file', 'info');
+      } else {
+        await tauriSetDefaultStorePath(currentFilePathRef.current);
+        setIsDefaultFile(true);
+        addToast(lang === 'zh' ? '已设为默认文件' : 'Set as default file', 'success');
+      }
+      return;
+    }
     if (!currentFileHandle.current) return;
     if (isDefaultFile) {
       await removeFileHandle();
@@ -400,9 +537,13 @@ const App: React.FC = () => {
   }, []);
 
   const saveToDisk = useCallback((content: string) => {
-    setMarkdown(content);
-    localStorage.setItem('gtd-markdown', content);
-    if (currentFileHandle.current) {
+    startTransition(() => setMarkdown(content));
+    if (!isTauri()) {
+      localStorage.setItem('gtd-markdown', content);
+    }
+    if (isTauri()) {
+      tauriWriteMarkdown(content).catch((e) => console.error('Tauri write_markdown:', e));
+    } else if (currentFileHandle.current) {
       saveToFile(content);
     }
     if (syncModeRef.current) {
@@ -411,6 +552,15 @@ const App: React.FC = () => {
   }, [saveToFile]);
 
   const handleSaveFile = useCallback(async () => {
+    if (isTauri()) {
+      try {
+        await tauriWriteMarkdown(markdown);
+        addToast(lang === 'zh' ? '保存成功' : 'Saved', 'success');
+      } catch (e) {
+        console.error(e);
+      }
+      return;
+    }
     if (currentFileHandle.current) {
       await saveToFile(markdown);
       addToast(lang === 'zh' ? '保存成功' : 'Saved', 'success');
@@ -626,29 +776,122 @@ const App: React.FC = () => {
     e.dataTransfer.setData('text/plain', payload);
     e.dataTransfer.setData('application/json', payload);
     e.dataTransfer.effectAllowed = 'move';
+    const data = { lineIndex: task.lineIndex, lineCount: task.lineCount ?? 1, isSubtask: !!(task as any).isSubtask };
+    dragPayloadRef.current = data;
     setIsSubtaskDragging(!!(task as any).isSubtask);
-  };
-
-  const getTaskDataFromTransfer = (dt: DataTransfer): { lineIndex: number; lineCount?: number; isSubtask?: boolean } | null => {
-    const raw = dt.getData('task') || dt.getData('text/plain') || dt.getData('application/json');
-    if (!raw) return null;
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return null;
-    }
   };
 
   const onDragEnd = useCallback(() => {
     setIsSubtaskDragging(false);
+    dragOverTaskIdRef.current = null;
+    dragPayloadRef.current = null;
+    if (dragOverRafRef.current != null) cancelAnimationFrame(dragOverRafRef.current);
+    dragOverRafRef.current = null;
     setDragOverTaskId(null);
   }, []);
 
+  const setDragOverTaskIdThrottled = useCallback((id: string | null) => {
+    if (dragOverTaskIdRef.current === id) return;
+    dragOverTaskIdRef.current = id;
+    if (dragOverRafRef.current != null) return;
+    dragOverRafRef.current = requestAnimationFrame(() => {
+      dragOverRafRef.current = null;
+      setDragOverTaskId(dragOverTaskIdRef.current);
+    });
+  }, []);
+
+  const getTaskDataFromTransfer = (dt: DataTransfer | null): { lineIndex: number; lineCount?: number; isSubtask?: boolean } | null => {
+    if (dt) {
+      const raw = dt.getData('task') || dt.getData('text/plain') || dt.getData('application/json');
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed != null && typeof parsed.lineIndex === 'number') return parsed;
+        } catch {}
+      }
+    }
+    return dragPayloadRef.current;
+  };
+
+  /** Tauri 专用：开始指针拖拽，不依赖 HTML5 DnD，拖拽过程仅更新 overlay 位置（DOM），不触发整树重渲染 */
+  const startPointerDrag = useCallback((task: Task, clientX?: number, clientY?: number) => {
+    if (!isTauri()) return;
+    const t = { ...task };
+    pointerDragTaskRef.current = t;
+    pointerDragPosRef.current = { x: clientX ?? 0, y: clientY ?? 0 };
+    setPointerDragTask(t);
+    setPointerDragActive(true);
+  }, []);
+
+  useEffect(() => {
+    if (!pointerDragActive || !isTauri()) return;
+    const overlay = pointerDragOverlayRef.current;
+    const pos = pointerDragPosRef.current;
+    if (overlay) overlay.style.transform = `translate(${pos.x}px,${pos.y}px)`;
+    const onMove = (e: PointerEvent) => {
+      if (!overlay) return;
+      overlay.style.transform = `translate(${e.clientX}px,${e.clientY}px)`;
+      const els = document.elementsFromPoint(e.clientX, e.clientY);
+      const dropEl = els.find(el => (el as HTMLElement).dataset?.drop);
+      if (dropEl !== pointerDragLastDropRef.current) {
+        pointerDragLastDropRef.current?.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-50/80', 'dark:bg-blue-900/30');
+        pointerDragLastDropRef.current = dropEl as Element | null;
+        (dropEl as HTMLElement)?.classList.add('ring-2', 'ring-blue-500', 'bg-blue-50/80', 'dark:bg-blue-900/30');
+      }
+    };
+    const onUp = (e: PointerEvent) => {
+      const task = pointerDragTaskRef.current;
+      pointerDragTaskRef.current = null;
+      setPointerDragTask(null);
+      setPointerDragActive(false);
+      pointerDragLastDropRef.current?.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-50/80', 'dark:bg-blue-900/30');
+      pointerDragLastDropRef.current = null;
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      if (!task) return;
+      const els = document.elementsFromPoint(e.clientX, e.clientY);
+      const dropEl = els.find(el => (el as HTMLElement).dataset?.drop) as HTMLElement | undefined;
+      if (!dropEl?.dataset?.drop) return;
+      const dropType = dropEl.dataset.drop;
+      const path = dropEl.dataset.dropPath;
+      const targetLineStr = dropEl.dataset.dropTargetLine;
+      const targetLine = targetLineStr != null ? parseInt(targetLineStr, 10) : NaN;
+      const handlers = pointerDragHandlersRef.current;
+      if (!handlers) return;
+      if (dropType === 'workflow' && path) {
+        handlers.handleMoveTaskToProject(task.lineIndex, path);
+        addToast(lang === 'zh' ? `已移至 ${path.split(' / ').pop()?.trim()}` : `Moved`, 'success');
+      } else if (dropType === 'project' && path) {
+        handlers.handleMoveTaskToProject(task.lineIndex, path);
+        addToast(lang === 'zh' ? `已移至 ${path.split(' / ').pop()?.trim()}` : `Moved`, 'success');
+      } else if (dropType === 'subtask' && !Number.isNaN(targetLine) && targetLine !== task.lineIndex) {
+        handlers.handleMakeSubtask(task.lineIndex, targetLine);
+        addToast(lang === 'zh' ? '已转为子任务' : 'Converted to subtask', 'success');
+      } else if (dropType === 'task-row' && !Number.isNaN(targetLine) && targetLine !== task.lineIndex) {
+        const lines = handlers.markdown.split('\n');
+        const lineCount = task.lineCount ?? 1;
+        let taskLines = lines.splice(task.lineIndex, lineCount);
+        if ((task as any).isSubtask) taskLines = taskLines.map((l: string) => l.replace(/^[\s\t]+-/, '-'));
+        let finalIdx = targetLine;
+        if (task.lineIndex < targetLine) finalIdx = targetLine - lineCount;
+        lines.splice(finalIdx, 0, ...taskLines);
+        handlers.saveToDisk(lines.join('\n'));
+        addToast((task as any).isSubtask ? 'Task Promoted' : 'Task Moved', 'success');
+      }
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    return () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    };
+  }, [pointerDragActive, lang, addToast]);
+
   const onTaskDrop = (e: React.DragEvent, targetLineIdx: number) => {
     e.preventDefault();
-    const taskData = getTaskDataFromTransfer(e.dataTransfer);
-    if (!taskData) return;
     try {
+      const taskData = getTaskDataFromTransfer(e.dataTransfer);
+      if (!taskData) return;
       const sourceIdx = Number(taskData.lineIndex);
       const targetIdx = Number(targetLineIdx);
       if (Number.isNaN(sourceIdx) || Number.isNaN(targetIdx) || sourceIdx === targetIdx) return;
@@ -734,6 +977,13 @@ const App: React.FC = () => {
     
     saveToDisk(lines.join('\n'));
     addToast(lang === 'zh' ? '已转为子任务' : 'Converted to subtask', 'success');
+  };
+
+  pointerDragHandlersRef.current = {
+    handleMoveTaskToProject,
+    handleMakeSubtask,
+    saveToDisk,
+    markdown
   };
 
   const handlePromoteSubtask = useCallback((subtaskLineIndex: number) => {
@@ -970,6 +1220,16 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-row w-screen h-screen bg-[#F8FAFC] dark:bg-[#0F172A] text-slate-900 dark:text-slate-100 overflow-hidden font-sans selection:bg-blue-500/30">
+      {/* Tauri 指针拖拽：跟随光标的浮层，仅 DOM 更新位置不触发重渲染 */}
+      {isTauri() && pointerDragTask && (
+        <div
+          ref={pointerDragOverlayRef}
+          className="fixed left-0 top-0 w-64 pointer-events-none z-[9999] px-3 py-2 rounded-xl shadow-2xl border-2 border-blue-500 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 text-sm font-bold truncate"
+          style={{ transform: `translate(${pointerDragPosRef.current.x}px,${pointerDragPosRef.current.y}px)` }}
+        >
+          {pointerDragTask.content}
+        </div>
+      )}
       {/* Dynamic Background Blur - Glassmorphism */}
       <div className="fixed inset-0 pointer-events-none z-0">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-400/10 dark:bg-blue-600/5 blur-[120px] rounded-full"></div>
@@ -1103,16 +1363,18 @@ const App: React.FC = () => {
                     key={path}
                     role="button"
                     tabIndex={0}
+                    data-drop="workflow"
+                    data-drop-path={path}
                     onClick={() => { setSelectedFilter({ type: 'project', value: path }); setActiveView('view'); }}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedFilter({ type: 'project', value: path }); setActiveView('view'); } }}
-                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverWorkflowPath(path); }}
-                    onDragLeave={() => setDragOverWorkflowPath(null)}
-                    onDrop={(e) => {
+                    onDragOver={!isTauri() ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverWorkflowPath(path); } : undefined}
+                    onDragLeave={!isTauri() ? () => setDragOverWorkflowPath(null) : undefined}
+                    onDrop={!isTauri() ? (e) => {
                       e.preventDefault();
                       setDragOverWorkflowPath(null);
                       const taskData = getTaskDataFromTransfer(e.dataTransfer);
                       if (taskData != null) handleMoveTaskToProject(taskData.lineIndex, path);
-                    }}
+                    } : undefined}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-2.5 min-h-[44px] rounded-2xl text-left text-sm font-bold transition-all cursor-pointer touch-manipulation",
                       active ? "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50",
@@ -1187,6 +1449,7 @@ const App: React.FC = () => {
                             onRename={handleRenameProject}
                             onDelete={handleDeleteProject}
                             onDropTask={handleMoveTaskToProject}
+                            getDraggedTaskData={getTaskDataFromTransfer}
                           />
                         </div>
                       ))}
@@ -1220,6 +1483,7 @@ const App: React.FC = () => {
                         onRename={handleRenameProject}
                         onDelete={handleDeleteProject}
                         onDropTask={handleMoveTaskToProject}
+                        getDraggedTaskData={getTaskDataFromTransfer}
                       />
                     </div>
                   ))}
@@ -1387,15 +1651,16 @@ const App: React.FC = () => {
                   {filteredTasks.map(task => (
                     <motion.div
                       key={task.id}
-                      layout
+                      data-drop="task-row"
+                      data-drop-target-line={String(task.lineIndex)}
                       initial={{ opacity: 0, scale: 0.98, y: 10 }}
                       animate={{ opacity: 1, scale: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.9, x: -20 }}
                       transition={{ type: "spring", stiffness: 500, damping: 30 }}
                       className="relative"
-                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverTaskId(task.id); }}
-                      onDragLeave={() => setDragOverTaskId(null)}
-                      onDrop={(e) => { setDragOverTaskId(null); onTaskDrop(e, task.lineIndex); }}
+                      onDragOver={!isTauri() ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverTaskIdThrottled(task.id); } : undefined}
+                      onDragLeave={!isTauri() ? () => setDragOverTaskIdThrottled(null) : undefined}
+                      onDrop={!isTauri() ? (e) => { setDragOverTaskIdThrottled(null); onTaskDrop(e, task.lineIndex); } : undefined}
                     >
                       {isSubtaskDragging && dragOverTaskId === task.id && (
                         <div className="absolute left-0 right-0 -top-1 z-10 h-0.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)] pointer-events-none" aria-hidden />
@@ -1416,7 +1681,10 @@ const App: React.FC = () => {
                         onPromoteSubtask={handlePromoteSubtask}
                         isSubtaskDragging={isSubtaskDragging}
                         isPromoteDropTarget={dragOverTaskId === task.id}
-                        isDraggingAnyTask={isSubtaskDragging}
+                        getDraggedTaskData={getTaskDataFromTransfer}
+                        usePointerDrag={isTauri()}
+                        onPointerDragStart={startPointerDrag}
+                        isDraggingAnyTask={isSubtaskDragging || pointerDragActive}
                       />
                     </motion.div>
                   ))}
