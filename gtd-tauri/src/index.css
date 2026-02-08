@@ -45,3 +45,29 @@ body {
 .scroll-smooth {
   scroll-behavior: smooth;
 }
+
+.is-switching {
+  will-change: auto !important;
+}
+.is-switching * {
+  transition: none !important;
+  animation: none !important;
+}
+.app-switching * {
+  transition: none !important;
+  animation: none !important;
+}
+
+.content-visibility-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: 800px 1000px;
+}
+
+.switching-no-blur {
+  backdrop-filter: none !important;
+  filter: none !important;
+}
+
+.switching-no-shadow {
+  box-shadow: none !important;
+}

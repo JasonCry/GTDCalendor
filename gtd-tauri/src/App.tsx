@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo, useTransition } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, useTransition, useDeferredValue } from 'react';
 import { 
   CheckCircle2, Plus, Menu, ListTodo, ChevronLeft, Clock, Trash2, X, Calendar as CalendarIcon,
   Search, Sun, Moon, BarChart2, Layers, Settings, Languages, Pause, Play, Square, Inbox, Zap, Coffee, Hourglass, Hash,
-  ChevronDown, ChevronRight, Info, FolderOpen, Save, Pin, Folder, Edit2
+  ChevronDown, ChevronRight, Info, FolderOpen, Save, Pin, Folder, Edit2, Eye, EyeOff
 } from 'lucide-react';
 import { format as formatDt, addDays, subDays } from 'date-fns';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -24,9 +24,9 @@ import {
   tauriReadFileAtPath,
   tauriWriteFileAtPath,
 } from './utils/tauriStorage';
-import TaskCard from './components/TaskCard';
 import ProjectItem from './components/ProjectItem';
 import Inspector from './components/Inspector';
+import TaskList from './components/TaskList';
 import { Task, ProjectNode, ProjectGroup } from './types/gtd';
 
 const cn = (...inputs: any[]) => twMerge(clsx(inputs));
@@ -46,6 +46,19 @@ const DEFAULT_GTD_TEMPLATE = `# 📥 收件箱
 
 /** 固定 GTD 工作流路径（与模板中的一级标题一致，用于侧栏与筛选） */
 const GTD_WORKFLOW_PATHS = ['📥 收件箱', '⚡ 下一步行动', '⏳ 等待确认', '☕ 将来/也许'] as const;
+const WORKFLOW_META = [
+  { key: 'inbox', defaultPath: '📥 收件箱', match: /收件箱|inbox/i },
+  { key: 'next', defaultPath: '⚡ 下一步行动', match: /下一步|next actions?|next action/i },
+  { key: 'waiting', defaultPath: '⏳ 等待确认', match: /等待|waiting/i },
+  { key: 'someday', defaultPath: '☕ 将来\/也许', match: /将来|未来也许|someday|maybe/i }
+] as const;
+
+const getWorkflowKey = (name: string): typeof WORKFLOW_META[number]['key'] | null => {
+  for (const m of WORKFLOW_META) {
+    if (m.match.test(name)) return m.key;
+  }
+  return null;
+};
 
 const App: React.FC = () => {
   const { 
@@ -60,6 +73,8 @@ const App: React.FC = () => {
   });
   const [newTaskInput, setNewTaskInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const deferredSelectedFilter = useDeferredValue(selectedFilter);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedSubtaskLineIndex, setSelectedSubtaskLineIndex] = useState<number | null>(null);
   const [isBatchMode, setIsBatchMode] = useState(false);
@@ -85,6 +100,22 @@ const App: React.FC = () => {
   const [syncMode, setSyncMode] = useState(false);
   const [isSubtaskDragging, setIsSubtaskDragging] = useState(false);
   const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null);
+  const [hideCompleted, setHideCompleted] = useState(false);
+  const [renderCount, setRenderCount] = useState(80);
+  const renderIdleRef = useRef<number | null>(null);
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const [listReady, setListReady] = useState(true);
+  const listReadyIdleRef = useRef<number | null>(null);
+  const prevActiveViewRef = useRef(activeView);
+  const [isSwitchingView, setIsSwitchingView] = useState(false);
+  const switchingTimerRef = useRef<number | null>(null);
+  const [listMounted, setListMounted] = useState(true);
+  const listMountIdleRef = useRef<number | null>(null);
+  const [listContainerHeight, setListContainerHeight] = useState(400);
+  const switchStartRef = useRef<number | null>(null);
+  const switchSeqRef = useRef(0);
+  const showFilterPerf = import.meta.env.DEV && (typeof window !== 'undefined' && (window as any).__gtdFilterPerf);
+  const showSwitchPerf = import.meta.env.DEV && (typeof window !== 'undefined' && (window as any).__gtdSwitchPerf);
 
   const mainInputRef = useRef<HTMLInputElement>(null);
   const [, startTransition] = useTransition();
@@ -117,7 +148,8 @@ const App: React.FC = () => {
   const currentFileHandle = useRef<any>(null);
   const currentFilePathRef = useRef<string | null>(null);
 
-  const { projects, allTasks } = useGtdParser(markdown, t);
+  const deferredMarkdown = useDeferredValue(markdown);
+  const { projects, allTasks } = useGtdParser(deferredMarkdown, t);
 
   const TZ_OFFSET_MINUTES: Record<string, number> = {
     UTC: 0,
@@ -366,9 +398,155 @@ const App: React.FC = () => {
 
   /** 排除固定 GTD 工作流后的项目列表（固定四项在侧栏顶部单独展示） */
   const customProjects = useMemo(() =>
-    projects.filter(p => !GTD_WORKFLOW_PATHS.includes(p.path as typeof GTD_WORKFLOW_PATHS[number])),
+    projects.filter(p => getWorkflowKey(p.name) == null),
     [projects]
   );
+
+  const flatProjects = useMemo(() => {
+    const out: ProjectNode[] = [];
+    const walk = (node: ProjectNode) => {
+      out.push(node);
+      node.children?.forEach(walk);
+    };
+    projects.forEach(walk);
+    return out;
+  }, [projects]);
+
+  const workflowPathMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const meta of WORKFLOW_META) {
+      const found = flatProjects.find(p => getWorkflowKey(p.name) === meta.key);
+      map.set(meta.key, found?.path ?? meta.defaultPath);
+    }
+    return map;
+  }, [flatProjects]);
+
+  const triggerSwitching = useCallback(() => {
+    if (switchingTimerRef.current != null) {
+      clearTimeout(switchingTimerRef.current);
+      switchingTimerRef.current = null;
+    }
+    setIsSwitchingView(true);
+    if (showSwitchPerf) {
+      switchStartRef.current = performance.now();
+      switchSeqRef.current += 1;
+      console.log(`[perf] switch start #${switchSeqRef.current} view=${activeView} filter=${selectedFilter.type}:${selectedFilter.value}`);
+    }
+    if (activeView === 'view') {
+      setListMounted(false);
+      if (listMountIdleRef.current != null) {
+        if (typeof (window as any).cancelIdleCallback === 'function') {
+          (window as any).cancelIdleCallback(listMountIdleRef.current);
+        } else {
+          clearTimeout(listMountIdleRef.current);
+        }
+        listMountIdleRef.current = null;
+      }
+      const resumeMount = () => {
+        listMountIdleRef.current = null;
+        setListMounted(true);
+      };
+      if (typeof (window as any).requestIdleCallback === 'function') {
+        listMountIdleRef.current = (window as any).requestIdleCallback(resumeMount, { timeout: 200 });
+      } else {
+        listMountIdleRef.current = window.setTimeout(resumeMount, 60) as unknown as number;
+      }
+    }
+    switchingTimerRef.current = window.setTimeout(() => {
+      switchingTimerRef.current = null;
+      setIsSwitchingView(false);
+    }, 100) as unknown as number;
+  }, [activeView, selectedFilter, showSwitchPerf]);
+
+  useEffect(() => {
+    const prev = prevActiveViewRef.current;
+    prevActiveViewRef.current = activeView;
+    if (prev === 'stats' && activeView === 'view') {
+      setListReady(false);
+      if (listReadyIdleRef.current != null) {
+        if (typeof (window as any).cancelIdleCallback === 'function') {
+          (window as any).cancelIdleCallback(listReadyIdleRef.current);
+        } else {
+          clearTimeout(listReadyIdleRef.current);
+        }
+        listReadyIdleRef.current = null;
+      }
+      const resume = () => setListReady(true);
+      if (typeof (window as any).requestIdleCallback === 'function') {
+        listReadyIdleRef.current = (window as any).requestIdleCallback(resume, { timeout: 300 });
+      } else {
+        listReadyIdleRef.current = window.setTimeout(resume, 50) as unknown as number;
+      }
+      triggerSwitching();
+    } else if (activeView !== 'view') {
+      setListReady(true);
+    }
+  }, [activeView, triggerSwitching]);
+
+  useEffect(() => {
+    if (activeView !== 'view') return;
+    triggerSwitching();
+  }, [activeView, selectedFilter, triggerSwitching]);
+
+  useEffect(() => {
+    if (!showSwitchPerf) return;
+    if (typeof (window as any).PerformanceObserver === 'undefined') return;
+    const observer = new (window as any).PerformanceObserver((list: PerformanceObserverEntryList) => {
+      for (const entry of list.getEntries()) {
+        if ((entry as any).duration >= 50) {
+          console.log(`[perf] longtask ${entry.duration.toFixed(1)}ms`);
+        }
+      }
+    });
+    try {
+      observer.observe({ entryTypes: ['longtask'] as any });
+    } catch {}
+    return () => observer.disconnect();
+  }, [showSwitchPerf]);
+
+  useEffect(() => {
+    if (!showSwitchPerf || switchStartRef.current == null) return;
+    const start = switchStartRef.current;
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const dt = performance.now() - start;
+        console.log(`[perf] switch to paint ${dt.toFixed(1)}ms`);
+      });
+    });
+    return () => {
+      if (raf1) cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+  }, [isSwitchingView, showSwitchPerf, activeView, selectedFilter]);
+
+  useEffect(() => {
+    const el = listScrollRef.current;
+    if (!el) return;
+    const setSize = () => setListContainerHeight(el.clientHeight || 400);
+    setSize();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => setSize());
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (switchingTimerRef.current != null) clearTimeout(switchingTimerRef.current);
+      switchingTimerRef.current = null;
+      if (listMountIdleRef.current != null) {
+        if (typeof (window as any).cancelIdleCallback === 'function') {
+          (window as any).cancelIdleCallback(listMountIdleRef.current);
+        } else {
+          clearTimeout(listMountIdleRef.current);
+        }
+        listMountIdleRef.current = null;
+      }
+    };
+  }, []);
   useEffect(() => {
     setProjectGroups(prev => prev.map(g => ({
       ...g,
@@ -598,25 +776,25 @@ const App: React.FC = () => {
     saveToDisk(lines.join('\n'));
   }, [markdown, allTasks, saveToDisk]);
 
-  const handleToggle = (idx: number, status: boolean) => {
-    const lines = markdown.split('\n');
+  const markdownRef = useRef(markdown);
+  markdownRef.current = markdown;
+  const allTasksRef = useRef(allTasks);
+  allTasksRef.current = allTasks;
+  const handleToggle = useCallback((idx: number, status: boolean) => {
+    const lines = markdownRef.current.split('\n');
     const line = lines[idx];
     if (!line) return;
-
     if (status) {
-      // Unchecking: Just switch [x] to [ ], keep everything else
       lines[idx] = line.replace(/(\s*-\s*)\[x\]/, '$1[ ]');
     } else {
-      // Checking: Just switch [ ] to [x], keep everything else
       lines[idx] = line.replace(/(\s*-\s*)\[ \]/, '$1[x]');
     }
     saveToDisk(lines.join('\n'));
-  };
+  }, [saveToDisk]);
 
-  const handleToggleSubtask = (subIdx: number, status: boolean) => {
-    // We use the same logic for subtasks as parent tasks now
+  const handleToggleSubtask = useCallback((subIdx: number, status: boolean) => {
     handleToggle(subIdx, status);
-  };
+  }, [handleToggle]);
 
   /** 从输入中解析自然语言时间（早上9点、下午2:00 等），返回 HH:mm 及剥离后的文本 */
   const parseNaturalLanguageTime = (input: string): { time: string; rest: string } | null => {
@@ -747,8 +925,18 @@ const App: React.FC = () => {
     }
 
     const content = dateTime ? `- [ ] ${text} @${dateTime}` : `- [ ] ${text}`;
-    // 捕捉的灵感一律放入收件箱
-    let insertIdx = lines.findIndex(l => l.includes('收件箱') || l.toLowerCase().includes('inbox')) + 1;
+    // 捕捉的灵感一律放入收件箱（支持不同语言/emoji 标题）
+    let insertIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim().startsWith('#')) continue;
+      const name = line.replace(/^#+\s*/, '').trim();
+      if (getWorkflowKey(name) === 'inbox') {
+        insertIdx = i + 1;
+        break;
+      }
+    }
+    if (insertIdx <= 0) insertIdx = lines.findIndex(l => l.includes('收件箱') || l.toLowerCase().includes('inbox')) + 1;
     if (insertIdx <= 0) insertIdx = lines.findIndex(l => l.startsWith('#')) + 1;
     if (insertIdx <= 0) {
       lines.push(`# 📥 ${t.inbox}`, content);
@@ -759,18 +947,20 @@ const App: React.FC = () => {
     setNewTaskInput('');
   };
 
-  const handleDeleteTask = (idx: number) => {
-    const task = allTasks.find(t => t.lineIndex === idx);
+  const handleDeleteTask = useCallback((idx: number) => {
+    const tasks = allTasksRef.current;
+    const md = markdownRef.current;
+    const task = tasks.find(t => t.lineIndex === idx);
     const lineCount = task?.lineCount ?? 1;
-    const lines = markdown.split('\n');
+    const lines = md.split('\n');
     lines.splice(idx, lineCount);
     saveToDisk(lines.join('\n'));
-    if (selectedTaskId && task && task.id === selectedTaskId) setSelectedTaskId(null);
-    if (selectedSubtaskLineIndex !== null && task && task.lineIndex === selectedSubtaskLineIndex) setSelectedSubtaskLineIndex(null);
+    setSelectedTaskId(prev => (prev && task && task.id === prev ? null : prev));
+    setSelectedSubtaskLineIndex(prev => (prev !== null && task && task.lineIndex === prev ? null : prev));
     addToast(t.deleteSelected, 'info');
-  };
+  }, [saveToDisk, addToast, t]);
 
-  const onDragStart = (e: React.DragEvent, task: Task) => {
+  const onDragStart = useCallback((e: React.DragEvent, task: Task) => {
     const payload = JSON.stringify(task);
     e.dataTransfer.setData('task', payload);
     e.dataTransfer.setData('text/plain', payload);
@@ -779,7 +969,7 @@ const App: React.FC = () => {
     const data = { lineIndex: task.lineIndex, lineCount: task.lineCount ?? 1, isSubtask: !!(task as any).isSubtask };
     dragPayloadRef.current = data;
     setIsSubtaskDragging(!!(task as any).isSubtask);
-  };
+  }, [setIsSubtaskDragging]);
 
   const onDragEnd = useCallback(() => {
     setIsSubtaskDragging(false);
@@ -789,6 +979,16 @@ const App: React.FC = () => {
     dragOverRafRef.current = null;
     setDragOverTaskId(null);
   }, []);
+
+  const handleOpenDetail = useCallback((task: Task) => {
+    setSelectedTaskId(task.id);
+    setSelectedSubtaskLineIndex(null);
+  }, []);
+  const handleOpenSubtaskDetail = useCallback((lineIndex: number) => {
+    setSelectedTaskId(null);
+    setSelectedSubtaskLineIndex(lineIndex);
+  }, []);
+  const noOp = useCallback(() => {}, []);
 
   const setDragOverTaskIdThrottled = useCallback((id: string | null) => {
     if (dragOverTaskIdRef.current === id) return;
@@ -800,7 +1000,7 @@ const App: React.FC = () => {
     });
   }, []);
 
-  const getTaskDataFromTransfer = (dt: DataTransfer | null): { lineIndex: number; lineCount?: number; isSubtask?: boolean } | null => {
+  const getTaskDataFromTransfer = useCallback((dt: DataTransfer): { lineIndex: number; lineCount?: number; isSubtask?: boolean } | null => {
     if (dt) {
       const raw = dt.getData('task') || dt.getData('text/plain') || dt.getData('application/json');
       if (raw) {
@@ -811,7 +1011,7 @@ const App: React.FC = () => {
       }
     }
     return dragPayloadRef.current;
-  };
+  }, []);
 
   /** Tauri 专用：开始指针拖拽，不依赖 HTML5 DnD，拖拽过程仅更新 overlay 位置（DOM），不触发整树重渲染 */
   const startPointerDrag = useCallback((task: Task, clientX?: number, clientY?: number) => {
@@ -887,7 +1087,7 @@ const App: React.FC = () => {
     };
   }, [pointerDragActive, lang, addToast]);
 
-  const onTaskDrop = (e: React.DragEvent, targetLineIdx: number) => {
+  const onTaskDrop = useCallback((e: React.DragEvent, targetLineIdx: number) => {
     e.preventDefault();
     try {
       const taskData = getTaskDataFromTransfer(e.dataTransfer);
@@ -913,9 +1113,9 @@ const App: React.FC = () => {
       saveToDisk(lines.join('\n'));
       addToast(taskData.isSubtask ? 'Task Promoted' : 'Task Moved', 'success');
     } catch (err) { console.error('Drop error:', err); }
-  };
+  }, [getTaskDataFromTransfer, markdown, saveToDisk, addToast]);
 
-  const handleMoveTaskToProject = (idx: number, targetPath: string) => {
+  const handleMoveTaskToProject = useCallback((idx: number, targetPath: string) => {
     const lines = markdown.split('\n');
     const task = allTasks.find(t => t.lineIndex === idx) || { lineCount: 1 };
     
@@ -934,6 +1134,17 @@ const App: React.FC = () => {
       (l.match(/^#+/) || ['#'])[0].length === targetLevel
     );
 
+    if (projectIdx === -1) {
+      const targetKey = getWorkflowKey(targetPath);
+      if (targetKey) {
+        projectIdx = lines.findIndex(l => {
+          if (!l.startsWith('#')) return false;
+          const name = l.replace(/^#+\s*/, '').trim();
+          return getWorkflowKey(name) === targetKey;
+        });
+      }
+    }
+
     // 若目标是固定 GTD 工作流但文件中尚无该标题，则在文件末尾追加该分区并放入任务
     if (projectIdx === -1 && GTD_WORKFLOW_PATHS.includes(targetPath as typeof GTD_WORKFLOW_PATHS[number])) {
       if (lines.length > 0 && lines[lines.length - 1].trim() !== '') lines.push('');
@@ -948,9 +1159,9 @@ const App: React.FC = () => {
       saveToDisk(lines.join('\n'));
       addToast(lang === 'zh' ? `已移至 ${targetName}` : `Moved to ${targetName}`, 'success');
     }
-  };
+  }, [markdown, allTasks, saveToDisk, addToast, lang]);
 
-  const handleMakeSubtask = (sourceIdx: number, targetIdx: number) => {
+  const handleMakeSubtask = useCallback((sourceIdx: number, targetIdx: number) => {
     const lines = markdown.split('\n');
     const sourceTask = allTasks.find(t => t.lineIndex === sourceIdx);
     if (!sourceTask) return;
@@ -977,7 +1188,7 @@ const App: React.FC = () => {
     
     saveToDisk(lines.join('\n'));
     addToast(lang === 'zh' ? '已转为子任务' : 'Converted to subtask', 'success');
-  };
+  }, [markdown, allTasks, saveToDisk, addToast, lang]);
 
   pointerDragHandlersRef.current = {
     handleMoveTaskToProject,
@@ -1153,48 +1364,173 @@ const App: React.FC = () => {
     return Hash;
   };
 
+  const taskIndexes = useMemo(() => {
+    const t0 = showFilterPerf ? performance.now() : 0;
+    const byProject = new Map<string, Task[]>();
+    const byTag = new Map<string, Task[]>();
+    const byDate = new Map<string, Task[]>();
+    for (const t of allTasks) {
+      // project index (supports prefix queries later)
+      if (!byProject.has(t.projectPath)) byProject.set(t.projectPath, []);
+      byProject.get(t.projectPath)!.push(t);
+      // tag index
+      for (const tag of t.tags) {
+        if (!byTag.has(tag)) byTag.set(tag, []);
+        byTag.get(tag)!.push(t);
+      }
+      // date index (date-only)
+      if (t.date) {
+        const d = t.date.split(' ')[0];
+        if (!byDate.has(d)) byDate.set(d, []);
+        byDate.get(d)!.push(t);
+      }
+    }
+    const res = { byProject, byTag, byDate };
+    if (showFilterPerf) {
+      const dt = performance.now() - t0;
+      console.log(`[perf] index-build ${dt.toFixed(2)}ms (tasks=${allTasks.length})`);
+    }
+    return res;
+  }, [allTasks, showFilterPerf]);
+
   const filteredTasks = useMemo(() => {
+    if (activeView !== 'view') return [];
+    if (!listReady) return [];
+    const t0 = showFilterPerf ? performance.now() : 0;
     const now = new Date();
     const todayStr = formatDt(now, 'yyyy-MM-dd');
     const tomorrowStr = formatDt(addDays(now, 1), 'yyyy-MM-dd');
     const next7DaysStr = formatDt(addDays(now, 7), 'yyyy-MM-dd');
 
-    return allTasks.filter(t => {
-      if (searchQuery && !t.content.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-      
-      if (selectedFilter.type === 'project') {
-        if (!t.projectPath.startsWith(selectedFilter.value)) return false;
-      } else if (selectedFilter.type === 'tag') {
-        if (!t.tags.includes(selectedFilter.value)) return false;
-      } else if (selectedFilter.type === 'time') {
-        if (!t.date) return false;
-        const taskDateOnly = t.date.split(' ')[0];
-        if (selectedFilter.value === 'today') {
-          return taskDateOnly === todayStr;
-        } else if (selectedFilter.value === 'tomorrow') {
-          return taskDateOnly === tomorrowStr;
-        } else if (selectedFilter.value === 'next7Days') {
-          return taskDateOnly >= todayStr && taskDateOnly <= next7DaysStr;
+    let base: Task[] = allTasks;
+    if (deferredSelectedFilter.type === 'project') {
+      const prefix = deferredSelectedFilter.value;
+      // collect exact + nested paths using indexed buckets
+      const buckets: Task[] = [];
+      taskIndexes.byProject.forEach((tasks, path) => {
+        if (path.startsWith(prefix)) buckets.push(...tasks);
+      });
+      base = buckets;
+    } else if (deferredSelectedFilter.type === 'tag') {
+      base = taskIndexes.byTag.get(deferredSelectedFilter.value) ?? [];
+    } else if (deferredSelectedFilter.type === 'time') {
+      if (deferredSelectedFilter.value === 'today') {
+        base = taskIndexes.byDate.get(todayStr) ?? [];
+      } else if (deferredSelectedFilter.value === 'tomorrow') {
+        base = taskIndexes.byDate.get(tomorrowStr) ?? [];
+      } else if (deferredSelectedFilter.value === 'next7Days') {
+        const next7: Task[] = [];
+        for (let i = 0; i <= 7; i++) {
+          const d = formatDt(addDays(now, i), 'yyyy-MM-dd');
+          const arr = taskIndexes.byDate.get(d);
+          if (arr) next7.push(...arr);
         }
+        base = next7;
       }
-      
-      return true;
-    });
-  }, [allTasks, searchQuery, selectedFilter]);
+    }
 
-  // GTD 回顾统计：基于已完成任务与项目分布
+    let result = base;
+    if (deferredSelectedFilter.type === 'project' && result.length > 1) {
+      result = [...result].sort((a, b) => a.lineIndex - b.lineIndex);
+    }
+    if (!deferredSearchQuery) {
+      if (showFilterPerf) {
+        const dt = performance.now() - t0;
+        console.log(`[perf] filter total ${dt.toFixed(2)}ms (base=${base.length}, result=${result.length})`);
+      }
+      return result;
+    }
+    const t1 = showFilterPerf ? performance.now() : 0;
+    const q = deferredSearchQuery.toLowerCase();
+    const filtered = result.filter(t => t.content.toLowerCase().includes(q));
+    if (showFilterPerf) {
+      const dt = performance.now() - t0;
+      const dtSearch = performance.now() - t1;
+      console.log(`[perf] filter total ${dt.toFixed(2)}ms (base=${base.length}, result=${result.length}) search=${dtSearch.toFixed(2)}ms`);
+    }
+    return filtered;
+  }, [activeView, allTasks, deferredSearchQuery, deferredSelectedFilter, taskIndexes, listReady, showFilterPerf]);
+
+  const displayedTasks = useMemo(() =>
+    hideCompleted ? filteredTasks.filter(t => !t.completed) : filteredTasks,
+  [filteredTasks, hideCompleted]);
+
+  const useVirtualList = displayedTasks.length > 120;
+  const useFixedHeight = displayedTasks.length > 800;
+  const compactList = displayedTasks.length > 800;
+
+  useEffect(() => {
+    if (useVirtualList) return;
+    if (activeView !== 'view') return;
+    const total = displayedTasks.length;
+    const initial = Math.min(80, total);
+    setRenderCount(initial);
+    if (total <= initial) return;
+    let cancelled = false;
+    const schedule = () => {
+      const run = () => {
+        if (cancelled) return;
+        setRenderCount(prev => {
+          const next = Math.min(prev + 80, total);
+          if (next < total) schedule();
+          return next;
+        });
+      };
+      if (typeof (window as any).requestIdleCallback === 'function') {
+        renderIdleRef.current = (window as any).requestIdleCallback(run, { timeout: 500 });
+      } else {
+        renderIdleRef.current = window.setTimeout(run, 16) as unknown as number;
+      }
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (renderIdleRef.current != null) {
+        if (typeof (window as any).cancelIdleCallback === 'function') {
+          (window as any).cancelIdleCallback(renderIdleRef.current);
+        } else {
+          clearTimeout(renderIdleRef.current);
+        }
+        renderIdleRef.current = null;
+      }
+    };
+  }, [activeView, displayedTasks, useVirtualList]);
+
+  const visibleTasks = useMemo(
+    () => (useVirtualList ? displayedTasks : displayedTasks.slice(0, renderCount)),
+    [displayedTasks, renderCount, useVirtualList]
+  );
+
+  // GTD review stats: include subtasks in counts
   const statistics = useMemo(() => {
-    const total = allTasks.length;
-    const completed = allTasks.filter(t => t.completed).length;
-    const completionRate = total ? Math.round((completed / total) * 100) : 0;
-    const doneDates = allTasks.filter(t => t.completed && t.doneDate).map(t => t.doneDate!.split(' ')[0]);
+    if (activeView !== 'stats') {
+      return {
+        totalCompleted: 0,
+        completionRate: 0,
+        activeDays: 0,
+        weeklyTrend: [] as { fullDate: string; label: string; count: number }[],
+        maxWeekCount: 1,
+        projectDistribution: [] as { name: string; total: number; completed: number; percent: number }[]
+      };
+    }
+    const totalTasksAndSubtasks = allTasks.length + allTasks.reduce((acc, t) => acc + t.subtasks.length, 0);
+    const completedTasksAndSubtasks = allTasks.filter(t => t.completed).length + allTasks.reduce((acc, t) => acc + t.subtasks.filter(s => s.completed).length, 0);
+    const completionRate = totalTasksAndSubtasks ? Math.round((completedTasksAndSubtasks / totalTasksAndSubtasks) * 100) : 0;
+    const doneDates = allTasks.flatMap(t => [
+      ...(t.completed && t.doneDate ? [t.doneDate.split(' ')[0]] : []),
+      ...t.subtasks.filter(s => s.completed && s.doneDate).map(s => s.doneDate!.split(' ')[0])
+    ]);
     const activeDays = new Set(doneDates).size;
 
     const now = new Date();
     const weekDays = Array.from({ length: 7 }, (_, i) => {
       const d = subDays(now, 6 - i);
       const fullDate = formatDt(d, 'yyyy-MM-dd');
-      const count = allTasks.filter(t => t.completed && t.doneDate && t.doneDate.startsWith(fullDate)).length;
+      let count = 0;
+      allTasks.forEach(t => {
+        if (t.completed && t.doneDate && t.doneDate.startsWith(fullDate)) count++;
+        t.subtasks.forEach(s => { if (s.completed && s.doneDate && s.doneDate.startsWith(fullDate)) count++; });
+      });
       const label = lang === 'zh' ? formatDt(d, 'M/d') : formatDt(d, 'EEE');
       return { fullDate, label, count };
     });
@@ -1206,6 +1542,10 @@ const App: React.FC = () => {
       const cur = projectMap.get(path) ?? { total: 0, completed: 0 };
       cur.total++;
       if (t.completed) cur.completed++;
+      t.subtasks.forEach(s => {
+        cur.total++;
+        if (s.completed) cur.completed++;
+      });
       projectMap.set(path, cur);
     });
     const projectDistribution = Array.from(projectMap.entries()).map(([name, { total: tot, completed: cmp }]) => ({
@@ -1215,11 +1555,11 @@ const App: React.FC = () => {
       percent: tot ? Math.round((cmp / tot) * 100) : 0
     })).sort((a, b) => b.total - a.total);
 
-    return { totalCompleted: completed, completionRate, activeDays, weeklyTrend: weekDays, maxWeekCount, projectDistribution };
-  }, [allTasks, lang]);
+    return { totalCompleted: completedTasksAndSubtasks, completionRate, activeDays, weeklyTrend: weekDays, maxWeekCount, projectDistribution };
+  }, [activeView, allTasks, lang]);
 
   return (
-    <div className="flex flex-row w-screen h-screen bg-[#F8FAFC] dark:bg-[#0F172A] text-slate-900 dark:text-slate-100 overflow-hidden font-sans selection:bg-blue-500/30">
+    <div className={cn("flex flex-row w-screen h-screen bg-[#F8FAFC] dark:bg-[#0F172A] text-slate-900 dark:text-slate-100 overflow-hidden font-sans selection:bg-blue-500/30", isSwitchingView && "app-switching")}>
       {/* Tauri 指针拖拽：跟随光标的浮层，仅 DOM 更新位置不触发重渲染 */}
       {isTauri() && pointerDragTask && (
         <div
@@ -1232,8 +1572,8 @@ const App: React.FC = () => {
       )}
       {/* Dynamic Background Blur - Glassmorphism */}
       <div className="fixed inset-0 pointer-events-none z-0">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-400/10 dark:bg-blue-600/5 blur-[120px] rounded-full"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-400/10 dark:bg-indigo-600/5 blur-[120px] rounded-full"></div>
+        <div className={cn("absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-400/10 dark:bg-blue-600/5 blur-[120px] rounded-full switchable-blur", isSwitchingView && "switching-no-blur")}></div>
+        <div className={cn("absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-400/10 dark:bg-indigo-600/5 blur-[120px] rounded-full switchable-blur", isSwitchingView && "switching-no-blur")}></div>
       </div>
 
       {/* Mobile: backdrop when sidebar open */}
@@ -1249,7 +1589,8 @@ const App: React.FC = () => {
         initial={false}
         animate={{ width: sidebarOpen ? 280 : 0 }}
         className={cn(
-          "fixed md:relative left-0 top-0 h-full md:h-auto bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-r border-slate-200/50 dark:border-slate-800/50 flex flex-col overflow-hidden z-20 shrink-0 shadow-xl md:shadow-none"
+          "fixed md:relative left-0 top-0 h-full md:h-auto bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-r border-slate-200/50 dark:border-slate-800/50 flex flex-col overflow-hidden z-20 shrink-0 shadow-xl md:shadow-none switchable-blur switchable-shadow",
+          isSwitchingView && "switching-no-blur switching-no-shadow"
         )}
       >
         <div className="p-8 flex items-center justify-between shrink-0">
@@ -1295,47 +1636,56 @@ const App: React.FC = () => {
         <div className="flex-1 overflow-y-auto px-5 space-y-8 custom-scrollbar">
           <div className="space-y-4">
             <div className="px-3 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em]">Navigation</div>
-            
+
             {/* 🧪 VERIFICATION ROW */}
             <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800/50 rounded-2xl">
-              <button 
-                onClick={() => { setSelectedFilter({type: 'all', value: 'ALL'}); setActiveView('view'); }}
-                className={cn(
-                  "flex-1 py-2 rounded-xl text-[10px] font-black transition-all",
-                  selectedFilter.type === 'all' && activeView === 'view' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
-                )}
-              >
-                ALL
-              </button>
-              <button 
-                onClick={() => { setSelectedFilter({type: 'time', value: 'today'}); setActiveView('view'); }}
-                className={cn(
-                  "flex-1 py-2 rounded-xl text-[10px] font-black transition-all",
-                  (selectedFilter.type === 'time' && selectedFilter.value === 'today') && activeView === 'view' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
-                )}
-              >
-                TODAY
-              </button>
-              <button 
-                onClick={() => { setSelectedFilter({type: 'time', value: 'next7Days'}); setActiveView('view'); }}
-                className={cn(
-                  "flex-1 py-2 rounded-xl text-[10px] font-black transition-all",
-                  (selectedFilter.type === 'time' && selectedFilter.value === 'next7Days') && activeView === 'view' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
-                )}
-              >
-                7 DAYS
-              </button>
-            </div>
+                <button 
+                  onClick={() => startTransition(() => { setSelectedFilter({type: 'all', value: 'ALL'}); setActiveView('view'); })}
+                  className={cn(
+                    "flex-1 py-2 rounded-xl text-[10px] font-black transition-all",
+                    (selectedFilter.type === 'all' || (selectedFilter.type === 'project' && getWorkflowKey(selectedFilter.value) === 'inbox')) && activeView === 'view' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
+                  )}
+                >
+                  ALL
+                </button>
+                <button 
+                  onClick={() => startTransition(() => { setSelectedFilter({type: 'time', value: 'today'}); setActiveView('view'); })}
+                  className={cn(
+                    "flex-1 py-2 rounded-xl text-[10px] font-black transition-all",
+                    (selectedFilter.type === 'time' && selectedFilter.value === 'today') && activeView === 'view' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
+                  )}
+                >
+                  TODAY
+                </button>
+                <button 
+                  onClick={() => startTransition(() => { setSelectedFilter({type: 'time', value: 'tomorrow'}); setActiveView('view'); })}
+                  className={cn(
+                    "flex-1 py-2 rounded-xl text-[10px] font-black transition-all",
+                    (selectedFilter.type === 'time' && selectedFilter.value === 'tomorrow') && activeView === 'view' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
+                  )}
+                >
+                  TOMORROW
+                </button>
+                <button 
+                  onClick={() => startTransition(() => { setSelectedFilter({type: 'time', value: 'next7Days'}); setActiveView('view'); })}
+                  className={cn(
+                    "flex-1 py-2 rounded-xl text-[10px] font-black transition-all",
+                    (selectedFilter.type === 'time' && selectedFilter.value === 'next7Days') && activeView === 'view' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500 hover:text-slate-700"
+                  )}
+                >
+                  7 DAYS
+                </button>
+              </div>
             <button
-              onClick={() => setActiveView('stats')}
-              className={cn(
-                "w-full mt-2 flex items-center gap-3 px-3 py-2.5 rounded-2xl text-sm font-black transition-all",
-                activeView === 'stats' ? "bg-blue-600 text-white shadow-sm" : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50"
-              )}
-            >
-              <BarChart2 size={18} className={activeView === 'stats' ? "text-white" : "text-slate-400"} />
-              {t.review}
-            </button>
+                onClick={() => startTransition(() => setActiveView('stats'))}
+                className={cn(
+                  "w-full mt-2 flex items-center gap-3 px-3 py-2.5 rounded-2xl text-sm font-black transition-all",
+                  activeView === 'stats' ? "bg-blue-600 text-white shadow-sm" : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50"
+                )}
+              >
+                <BarChart2 size={18} className={activeView === 'stats' ? "text-white" : "text-slate-400"} />
+                {t.review}
+              </button>
           </div>
 
           <div className="space-y-2">
@@ -1352,11 +1702,14 @@ const App: React.FC = () => {
             </div>
             {/* 固定 GTD 工作流：收件箱、下一步行动、等待确认、将来/也许（支持拖入任务） */}
             <div className="space-y-0.5 mb-4">
-              {GTD_WORKFLOW_PATHS.map(path => {
-                const label = path === '📥 收件箱' ? t.inbox : path === '⚡ 下一步行动' ? t.nextActions : path === '⏳ 等待确认' ? t.waitingFor : t.somedayMaybe;
+              {WORKFLOW_META.map(meta => {
+                const path = workflowPathMap.get(meta.key) ?? meta.defaultPath;
+                const label = meta.key === 'inbox' ? t.inbox : meta.key === 'next' ? t.nextActions : meta.key === 'waiting' ? t.waitingFor : t.somedayMaybe;
                 const active = selectedFilter.type === 'project' && selectedFilter.value === path;
                 const workflowNode = projects.find(p => p.path === path);
                 const incompleteCount = workflowNode?.incompleteCount ?? 0;
+                const totalCount = workflowNode?.tasks?.length ?? 0;
+                const isInbox = meta.key === 'inbox';
                 const isDragOver = dragOverWorkflowPath === path;
                 return (
                   <div
@@ -1383,12 +1736,12 @@ const App: React.FC = () => {
                   >
                     {React.createElement(getGTDIcon(path), { size: 18, className: active ? "text-blue-600 dark:text-blue-400" : "text-slate-400" })}
                     <span className="truncate flex-1">{label}</span>
-                    {incompleteCount > 0 && (
+                    {(isInbox ? totalCount > 0 : incompleteCount > 0) && (
                       <span className={cn(
                         "text-[10px] font-black px-1.5 py-0.5 rounded-full min-w-[20px] text-center shrink-0",
                         active ? "bg-blue-500 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-400"
                       )}>
-                        {incompleteCount}
+                        {isInbox ? totalCount : incompleteCount}
                       </span>
                     )}
                   </div>
@@ -1506,7 +1859,7 @@ const App: React.FC = () => {
                 {activeView === 'stats' ? t.achievementCenter : t.allTasks}
               </h2>
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                {activeView === 'stats' ? '' : `${filteredTasks.length} ${t.activeProjects}`}
+                {activeView === 'stats' ? '' : `${displayedTasks.length} ${t.activeProjects}`}
               </span>
             </div>
             {activeView !== 'stats' && (
@@ -1531,11 +1884,22 @@ const App: React.FC = () => {
                   )}
                   placeholder={t.searchPlaceholder}
                 />
+                <button
+                  type="button"
+                  onClick={() => setHideCompleted(prev => !prev)}
+                  className={cn(
+                    "p-2 rounded-xl shrink-0 transition-colors",
+                    hideCompleted ? "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300" : "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                  )}
+                  title={hideCompleted ? (lang === 'zh' ? '显示已完成' : 'Show completed') : (lang === 'zh' ? '隐藏已完成' : 'Hide completed')}
+                >
+                  {hideCompleted ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
             )}
           </div>
 
-          <div className="flex items-center gap-4 bg-white/50 dark:bg-slate-800/50 backdrop-blur-md p-1.5 rounded-2xl border border-white/50 dark:border-slate-700/50 shadow-xl shadow-slate-200/20 dark:shadow-none">
+          <div className={cn("flex items-center gap-4 bg-white/50 dark:bg-slate-800/50 backdrop-blur-md p-1.5 rounded-2xl border border-white/50 dark:border-slate-700/50 shadow-xl shadow-slate-200/20 dark:shadow-none switchable-blur switchable-shadow", isSwitchingView && "switching-no-blur switching-no-shadow")}>
             <div className="px-4 flex items-center gap-3">
                <div className={cn("w-2 h-2 rounded-full", pomoState.isActive ? "bg-rose-500 animate-pulse" : "bg-slate-300 dark:bg-slate-600")}></div>
                <span className="text-sm font-black font-mono tracking-tighter min-w-[3rem]">{formatPomoTime(pomoState.timeLeft)}</span>
@@ -1564,7 +1928,11 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-8 pb-10 custom-scrollbar">
+        <div
+          ref={listScrollRef}
+          className={cn("flex-1 overflow-y-auto px-8 pb-10 custom-scrollbar content-visibility-auto", isSwitchingView && "is-switching")}
+          style={isSwitchingView ? { willChange: 'auto' } : undefined}
+        >
           {activeView === 'stats' ? (
             <div className="max-w-4xl mx-auto w-full p-2">
               {/* GTD 回顾统计：三张概览卡片 */}
@@ -1630,7 +1998,7 @@ const App: React.FC = () => {
                   )}
                 </div>
               </div>
-            </div>
+              </div>
           ) : (
             <div className="max-w-4xl mx-auto w-full">
               <div className="relative group mb-8">
@@ -1646,50 +2014,47 @@ const App: React.FC = () => {
                 />
               </div>
 
-              <div className="space-y-2">
-                <AnimatePresence mode="popLayout">
-                  {filteredTasks.map(task => (
-                    <motion.div
-                      key={task.id}
-                      data-drop="task-row"
-                      data-drop-target-line={String(task.lineIndex)}
-                      initial={{ opacity: 0, scale: 0.98, y: 10 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.9, x: -20 }}
-                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                      className="relative"
-                      onDragOver={!isTauri() ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverTaskIdThrottled(task.id); } : undefined}
-                      onDragLeave={!isTauri() ? () => setDragOverTaskIdThrottled(null) : undefined}
-                      onDrop={!isTauri() ? (e) => { setDragOverTaskIdThrottled(null); onTaskDrop(e, task.lineIndex); } : undefined}
-                    >
-                      {isSubtaskDragging && dragOverTaskId === task.id && (
-                        <div className="absolute left-0 right-0 -top-1 z-10 h-0.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)] pointer-events-none" aria-hidden />
-                      )}
-                      <TaskCard 
-                        task={task}
-                        isActive={selectedTaskId === task.id || (selectedSubtaskLineIndex != null && task.subtasks.some(s => s.lineIndex === selectedSubtaskLineIndex))}
-                        isBatchMode={isBatchMode}
-                        selected={selectedTaskIds.has(task.id)}
-                        onToggle={handleToggle}
-                        onDelete={handleDeleteTask}
-                        onSelect={(id) => {}}
-                        onOpenDetail={(t) => { setSelectedTaskId(t.id); setSelectedSubtaskLineIndex(null); }}
-                        onOpenSubtaskDetail={(lineIndex) => { setSelectedTaskId(null); setSelectedSubtaskLineIndex(lineIndex); }}
-                        onDragStart={onDragStart}
-                        onDragEnd={onDragEnd}
-                        onMakeSubtask={handleMakeSubtask}
-                        onPromoteSubtask={handlePromoteSubtask}
-                        isSubtaskDragging={isSubtaskDragging}
-                        isPromoteDropTarget={dragOverTaskId === task.id}
-                        getDraggedTaskData={getTaskDataFromTransfer}
-                        usePointerDrag={isTauri()}
-                        onPointerDragStart={startPointerDrag}
-                        isDraggingAnyTask={isSubtaskDragging || pointerDragActive}
-                      />
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-              </div>
+              {listMounted ? (
+                <TaskList
+                  tasks={visibleTasks}
+                  selectedTaskId={selectedTaskId}
+                  selectedSubtaskLineIndex={selectedSubtaskLineIndex}
+                  isBatchMode={isBatchMode}
+                  selectedTaskIds={selectedTaskIds}
+                  onToggle={handleToggle}
+                  onDelete={handleDeleteTask}
+                  onSelect={noOp}
+                  onOpenDetail={handleOpenDetail}
+                  onOpenSubtaskDetail={handleOpenSubtaskDetail}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                  onMakeSubtask={handleMakeSubtask}
+                  onPromoteSubtask={handlePromoteSubtask}
+                  isSubtaskDragging={isSubtaskDragging}
+                  dragOverTaskId={dragOverTaskId}
+                  getDraggedTaskData={getTaskDataFromTransfer}
+                  usePointerDrag={isTauri()}
+                  onPointerDragStart={startPointerDrag}
+                  isDraggingAnyTask={isSubtaskDragging || pointerDragActive}
+                  onTaskDrop={onTaskDrop}
+                  setDragOverTaskIdThrottled={setDragOverTaskIdThrottled}
+                  isTauriEnv={isTauri()}
+                  useMotion={!isTauri() && !useVirtualList && visibleTasks.length <= 200}
+                  useVirtual={useVirtualList}
+                  useFixedHeight={useFixedHeight}
+                  compact={compactList}
+                  switching={isSwitchingView}
+                  estimateHeight={compactList ? 44 : 56}
+                  scrollParentRef={listScrollRef}
+                />
+              ) : (
+                <div style={{ height: listContainerHeight }} />
+              )}
+              {!useVirtualList && renderCount < displayedTasks.length && (
+                <div className="text-center text-xs font-bold text-slate-400 dark:text-slate-500 py-3">
+                  {lang === 'zh' ? '加载更多...' : 'Loading more...'}
+                </div>
+              )}
             </div>
           )}
         </div>

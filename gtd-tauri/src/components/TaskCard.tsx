@@ -15,6 +15,7 @@ interface TaskCardProps {
   isBatchMode?: boolean;
   selected?: boolean;
   isActive?: boolean;
+  compact?: boolean;
   onToggle: (idx: number, status: boolean) => void;
   onDelete: (idx: number) => void;
   onSelect: (id: string) => void;
@@ -38,7 +39,7 @@ interface TaskCardProps {
 const SWIPE_THRESHOLD = 60;
 
 const TaskCard: React.FC<TaskCardProps> = React.memo(({ 
-  task, isBatchMode, selected, isActive, 
+  task, isBatchMode, selected, isActive, compact = false,
   onToggle, onDelete, onSelect, onOpenDetail, onDragStart, onDragEnd, onMakeSubtask, onPromoteSubtask, onOpenSubtaskDetail, isSubtaskDragging, isPromoteDropTarget, getDraggedTaskData, usePointerDrag, onPointerDragStart, isDraggingAnyTask
 }) => {
   const { lang } = useGtd();
@@ -75,6 +76,7 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
     onOpenDetail(task);
   };
   const isOverdue = useMemo(() => {
+    if (compact) return false;
     if (!task.date || task.completed) return false;
     try {
       const hasTime = task.date.includes(' ');
@@ -85,7 +87,7 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
       if (!hasTime) return isBefore(taskDate, startOfDay(now));
       return isBefore(taskDate, now);
     } catch { return false; }
-  }, [task.date, task.completed]);
+  }, [compact, task.date, task.completed]);
 
   const priorityStyle = useMemo(() => {
     switch(task.priority) {
@@ -110,10 +112,11 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
   return (
     <div 
       className={cn(
-        "task-card-root group relative flex flex-col bg-white dark:bg-slate-800 border rounded-lg transition-all duration-200 mb-0.5 shadow-sm overflow-hidden",
+        "task-card-root group relative flex flex-col bg-white dark:bg-slate-800 border mb-0.5 overflow-hidden",
+        compact ? "rounded-md" : "rounded-lg transition-all duration-200 shadow-sm",
         task.completed ? "opacity-50" : "border-slate-200 dark:border-slate-700",
-        isActive && "border-blue-500 ring-4 ring-blue-500/10",
-        selected && "border-blue-500 ring-2 ring-blue-500/20",
+        !compact && isActive && "border-blue-500 ring-4 ring-blue-500/10",
+        !compact && selected && "border-blue-500 ring-2 ring-blue-500/20",
         showPromoteHint && "ring-2 ring-blue-500 border-blue-400 bg-blue-50/50 dark:bg-blue-900/20"
       )}
       onClick={handleCardClick}
@@ -126,7 +129,7 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
           {lang === 'zh' ? '松开即可提升为独立任务' : 'Drop to promote to task'}
         </div>
       )}
-      <div className="flex min-h-[32px]">
+      <div className={cn("flex min-h-[32px]", compact && "min-h-[28px]")}>
         {/* 拖拽抓手：Tauri 下用指针事件，否则用 HTML5 draggable */}
         <div 
           className="w-7 flex items-center justify-center rounded-l-xl cursor-grab active:cursor-grabbing shrink-0 bg-slate-100 dark:bg-slate-700/80 text-slate-500 dark:text-slate-400 hover:bg-slate-200 hover:text-slate-600 dark:hover:bg-slate-600 dark:hover:text-slate-300 transition-colors"
@@ -143,7 +146,7 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
           <GripVertical size={14} strokeWidth={2.5} />
         </div>
 
-        <div className="flex-1 px-2 py-1.5 flex items-center gap-2">
+        <div className={cn("flex-1 px-2 py-1.5 flex items-center gap-2", compact && "py-1")}>
           {isBatchMode ? (
             <button onClick={(e) => { e.stopPropagation(); onSelect(task.id); }} className="shrink-0 text-blue-500">
               {selected ? <CheckSquare size={17} className="fill-current/10" /> : <Square size={17} className="opacity-40" />}
@@ -158,12 +161,12 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
           )}
 
           <div className="flex-1 flex items-center gap-2 min-w-0">
-            {task.priority && (
+            {!compact && task.priority && (
               <span className={cn("text-[10px] font-black px-1.5 py-0.5 rounded-md border shrink-0", priorityStyle)}>
                 P{task.priority}
               </span>
             )}
-            {task.tags && task.tags.length > 0 && (
+            {!compact && task.tags && task.tags.length > 0 && (
               <div className="flex items-center gap-1 shrink-0 flex-wrap">
                 {task.tags.slice(0, 3).map(tag => (
                   <span key={tag} className="text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/80 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-600">
@@ -182,7 +185,7 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
               {task.content}
             </h4>
             <div className="flex items-center gap-2 shrink-0 ml-auto">
-              {task.recurrence && (
+              {!compact && task.recurrence && (
                 <span
                   className="flex items-center gap-0.5 text-[10px] font-bold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/30 px-1.5 py-0.5 rounded border border-violet-200 dark:border-violet-800"
                   title={lang === 'zh' ? (task.recurrence === 'day' ? '每天重复' : task.recurrence === 'week' ? '每周重复' : '每月重复') : (task.recurrence === 'day' ? 'Repeats daily' : task.recurrence === 'week' ? 'Repeats weekly' : 'Repeats monthly')}
@@ -210,7 +213,7 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
       </div>
 
       {/* Subtasks Section */}
-      {task.subtasks && task.subtasks.length > 0 && (
+      {!compact && task.subtasks && task.subtasks.length > 0 && (
         <div className="ml-6 border-l-2 border-slate-100 dark:border-slate-700">
           {task.subtasks.map((sub) => (
             <div key={sub.lineIndex} className="flex min-h-[28px] border-t border-slate-100 dark:border-slate-700/50">
@@ -286,47 +289,49 @@ const TaskCard: React.FC<TaskCardProps> = React.memo(({
       )}
 
       {/* 📥 NESTING DROP ZONE: 仅在拖拽或悬停时占高，平时仅保留极窄可命中区 */}
-      <div 
-        data-drop="subtask"
-        data-drop-target-line={String(task.lineIndex)}
-        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setIsSubtaskDropTarget(true); }}
-        onDragLeave={() => setIsSubtaskDropTarget(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setIsSubtaskDropTarget(false);
-          const taskData = getDraggedTaskData
-            ? getDraggedTaskData(e.dataTransfer)
-            : (() => {
-                const raw = e.dataTransfer.getData('task') || e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('application/json');
-                if (!raw) return null;
-                try {
-                  return JSON.parse(raw);
-                } catch {
-                  return null;
-                }
-              })();
-          if (!taskData || taskData.lineIndex === task.lineIndex) return;
-          onMakeSubtask(taskData.lineIndex, task.lineIndex);
-        }}
-        className={cn(
-          "ml-10 mt-0.5 rounded-lg transition-all duration-200 flex items-center justify-center border-2 border-dashed",
-          showSubtaskZone
-            ? isSubtaskDropTarget 
-              ? "min-h-[48px] h-14 border-blue-500 bg-blue-500/10 scale-[1.01] shadow-md" 
-              : "min-h-[20px] h-5 border-slate-200/50 dark:border-slate-600/50"
-            : "min-h-[3px] h-0.5 border-transparent hover:min-h-[20px] hover:h-5 hover:border-slate-200/50 dark:hover:border-slate-600/50"
-        )}
-      >
-        {isSubtaskDropTarget && (
-          <div className="flex flex-col items-center gap-1">
-            <span className="text-[11px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest animate-bounce">
-              Drop to create Subtask
-            </span>
-            <span className="text-[9px] text-blue-400 opacity-70">Will indent under: {task.content.slice(0, 20)}...</span>
-          </div>
-        )}
-      </div>
+      {!compact && (
+        <div 
+          data-drop="subtask"
+          data-drop-target-line={String(task.lineIndex)}
+          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setIsSubtaskDropTarget(true); }}
+          onDragLeave={() => setIsSubtaskDropTarget(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setIsSubtaskDropTarget(false);
+            const taskData = getDraggedTaskData
+              ? getDraggedTaskData(e.dataTransfer)
+              : (() => {
+                  const raw = e.dataTransfer.getData('task') || e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('application/json');
+                  if (!raw) return null;
+                  try {
+                    return JSON.parse(raw);
+                  } catch {
+                    return null;
+                  }
+                })();
+            if (!taskData || taskData.lineIndex === task.lineIndex) return;
+            onMakeSubtask(taskData.lineIndex, task.lineIndex);
+          }}
+          className={cn(
+            "ml-10 mt-0.5 rounded-lg transition-all duration-200 flex items-center justify-center border-2 border-dashed",
+            showSubtaskZone
+              ? isSubtaskDropTarget 
+                ? "min-h-[48px] h-14 border-blue-500 bg-blue-500/10 scale-[1.01] shadow-md" 
+                : "min-h-[20px] h-5 border-slate-200/50 dark:border-slate-600/50"
+              : "min-h-[3px] h-0.5 border-transparent hover:min-h-[20px] hover:h-5 hover:border-slate-200/50 dark:hover:border-slate-600/50"
+          )}
+        >
+          {isSubtaskDropTarget && (
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-[11px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest animate-bounce">
+                Drop to create Subtask
+              </span>
+              <span className="text-[9px] text-blue-400 opacity-70">Will indent under: {task.content.slice(0, 20)}...</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 });
